@@ -1,57 +1,89 @@
-# Sample Hardhat 3 Beta Project (`node:test` and `viem`)
+# Dabanc Launchpad Protocol · Institutional RWA Launchpad 🚀
 
-This project showcases a Hardhat 3 Beta project using the native Node.js test runner (`node:test`) and the `viem` library for Ethereum interactions.
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) ![Ethereum](https://img.shields.io/badge/network-Ethereum%20Sepolia-3C3C3D) ![TypeScript](https://img.shields.io/badge/language-TypeScript-3178C6)
 
-To learn more about the Hardhat 3 Beta, please visit the [Getting Started guide](https://hardhat.org/docs/getting-started#getting-started-with-hardhat-3). To share your feedback, join our [Hardhat 3 Beta](https://hardhat.org/hardhat3-beta-telegram-group) Telegram group or [open an issue](https://github.com/NomicFoundation/hardhat/issues/new) in our GitHub issue tracker.
+Dabanc is an institutional-grade RWA issuance platform simulating a fair launch for **SpaceX Equity Tokens (wSPX)** on Sepolia. The protocol combines a discrete batch auction to stop MEV/gas wars with an on-chain green shoe mechanism to dampen post-settlement volatility.
 
-## Project Overview
+Key capabilities:
+- ⏱️ **5-Minute Batch Auction:** Orders are accumulated for 5 minutes; a uniform clearing price is computed off-chain and settled on-chain with `Price = Total Raised / Token Supply`, avoiding AMM-style race conditions.
+- 🛡️ **Green Shoe Stabilization:** 15% of raised capital is automatically routed to `GreenShoeVault` on settlement to support price stability instead of flowing to the project owner.
+- 🤖 **Hybrid Architecture:** A Node.js keeper (`scripts/auto_bot.ts`) watches the clock and triggers `executeClearing` when a round ends.
+- 📈 **Real-Time Pricing Engine:** Frontend streams pool size and shows the estimated clearing price as bids arrive.
+- ✅ **KYC/Whitelist:** `onlyWhitelisted` gating blocks bids from non-approved wallets.
 
-This example project includes:
+## Architecture Overview
 
-- A simple Hardhat configuration file.
-- Foundry-compatible Solidity unit tests.
-- TypeScript integration tests using [`node:test`](nodejs.org/api/test.html), the new Node.js native test runner, and [`viem`](https://viem.sh/).
-- Examples demonstrating how to connect to different types of networks, including locally simulating OP mainnet.
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Contract as Smart Contract
+    participant Bot as Auto-Bot
+    participant Vault as GreenShoe Vault
 
-## Usage
-
-### Running Tests
-
-To run all the tests in the project, execute the following command:
-
-```shell
-npx hardhat test
+    User->>Frontend: Place bid
+    Frontend->>Contract: depositBid()
+    Bot-->Contract: Check round end time
+    Bot->>Contract: executeClearing()
+    Contract-->>Vault: Divert 15% to vault
+    Contract-->>Frontend: Emit settlement events
+    Frontend-->>User: Settlement report & refreshed price
 ```
 
-You can also selectively run the Solidity or `node:test` tests:
+## Technology Stack
 
-```shell
-npx hardhat test solidity
-npx hardhat test nodejs
-```
+- **Backend:** Solidity 0.8.20, Hardhat, Ethers.js
+- **Frontend:** Next.js 14, RainbowKit, Wagmi v2, Viem
 
-### Make a deployment to Sepolia
+## Getting Started
 
-This project includes an example Ignition module to deploy the contract. You can deploy this module to a locally simulated chain or to Sepolia.
+### Prerequisites
 
-To run the deployment to a local chain:
+- Node.js LTS
+- MetaMask connected to Sepolia
+- Alchemy Sepolia API key
 
-```shell
-npx hardhat ignition deploy ignition/modules/Counter.ts
-```
+### Backend Setup
 
-To run the deployment to Sepolia, you need an account with funds to send the transaction. The provided Hardhat configuration includes a Configuration Variable called `SEPOLIA_PRIVATE_KEY`, which you can use to set the private key of the account you want to use.
+1) `cd backend` then install deps: `npm install`  
+2) Create `.env` with:
+   - `PRIVATE_KEY=your_deployer_key`
+   - `SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/<KEY>`
+3) Compile contracts: `npx hardhat compile`
+4) Deploy to Sepolia:  
+   `npx hardhat run scripts/deploy_sepolia.ts --network sepolia`
+5) **Whitelist users (critical or bids will revert with gas errors):**  
+   `npx hardhat run scripts/whitelist_user.ts --network sepolia`  
+   Run this for each wallet that should be allowed to bid.
+6) Start the keeper/oracle bot in a separate terminal:  
+   `npx hardhat run scripts/auto_bot.ts --network sepolia`  
+   The bot checks when a 5-minute window closes and calls `executeClearing`.
 
-You can set the `SEPOLIA_PRIVATE_KEY` variable using the `hardhat-keystore` plugin or by setting it as an environment variable.
+### Frontend Setup
 
-To set the `SEPOLIA_PRIVATE_KEY` config variable using `hardhat-keystore`:
+1) `cd frontend` then install deps: `npm install`  
+2) Update deployment addresses in `constants.ts` (`Auction`, `USDC`, `wSPX`, `GreenShoeVault`).  
+3) Run the app: `npm run dev` and open the provided local URL.
 
-```shell
-npx hardhat keystore set SEPOLIA_PRIVATE_KEY
-```
+## Usage Guide (The Demo Flow)
 
-After setting the variable, you can run the deployment with the Sepolia network:
+1) Connect your wallet to Sepolia in the UI.  
+2) Grab mock USDC from the faucet link in the app.  
+3) Approve USDC and place a bid; watch the estimated clearing price move in real time.  
+4) Wait for the bot terminal to show `executeClearing` once the 5-minute round ends.  
+5) The frontend auto-refreshes and shows the 🟩 Settlement Report card with the clearing price and green shoe allocation.  
+6) As admin, click **Start Next Round** to reset and begin the next batch.
 
-```shell
-npx hardhat ignition deploy --network sepolia ignition/modules/Counter.ts
-```
+## Troubleshooting
+
+- **Error:** "Transaction gas limit too high" → **Solution:** Your wallet is not whitelisted. Run `scripts/whitelist_user.ts` for that address.  
+- **Error:** "Buttons not working" → **Solution:** Ensure `scripts/auto_bot.ts` is running in another terminal so settlements can progress.
+
+## Deployed Contracts (Sepolia)
+
+| Contract         | Address |
+| ---------------- | -------- |
+| Auction          | `0x...` |
+| USDC             | `0x...` |
+| wSPX             | `0x...` |
+| GreenShoeVault   | `0x...` |
