@@ -1,0 +1,30 @@
+[
+  {
+    "roundId": 1,
+    "totalRaised": "100.0",
+    "clearingPrice": "0.2",
+    "timestamp": "2025-12-08T07:41:49.145Z",
+    "status": "Success"
+  },
+  {
+    "roundId": 2,
+    "totalRaised": "605.0",
+    "clearingPrice": "1.21",
+    "timestamp": "2025-12-08T07:52:01.238Z",
+    "status": "Success"
+  },
+  {
+    "roundId": 3,
+    "totalRaised": "500.0",
+    "clearingPrice": "1.0",
+    "timestamp": "2025-12-08T08:04:00.830Z",
+    "status": "Success"
+  },
+  {
+    "roundId": 4,
+    "totalRaised": "1066.0",
+    "clearingPrice": "2.132",
+    "timestamp": "2025-12-08T08:32:00.656Z",
+    "status": "Success"
+  }
+]
