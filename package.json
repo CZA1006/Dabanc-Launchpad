@@ -7,10 +7,12 @@
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/better-sqlite3": "^7.6.13",
     "hardhat": "^2.22.17"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.2",
+    "better-sqlite3": "^12.5.0",
     "dotenv": "^16.4.5"
   }
 }

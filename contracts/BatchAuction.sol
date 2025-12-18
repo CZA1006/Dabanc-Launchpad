@@ -14,12 +14,14 @@ contract BatchAuction is Ownable {
     address public greenShoeVault;
     
     uint256 public constant GREEN_SHOE_RATIO = 1500; 
+
+    // 修改前 (录视频时改回 5 minutes)
     uint256 public constant ROUND_DURATION = 5 minutes;
     
     uint256 public currentRoundId;
     uint256 public lastClearingTime;
     
-    // === 🌟 新增状态：当前轮次是否正在进行 ===
+    // 状态开关
     bool public isRoundActive;
 
     mapping(address => bool) public isWhitelisted;
@@ -33,16 +35,17 @@ contract BatchAuction is Ownable {
     mapping(uint256 => RoundInfo) public rounds;
     mapping(uint256 => mapping(address => uint256)) public userBids;
 
-    event BidPlaced(uint256 indexed roundId, address indexed user, uint256 amount);
+    // 🌟 修改点 1: 事件增加 limitPrice
+    event BidPlaced(uint256 indexed roundId, address indexed user, uint256 amount, uint256 limitPrice);
+    
     event RoundCleared(uint256 indexed roundId, uint256 clearingPrice, uint256 totalVolume);
     event GreenShoeActivated(uint256 amountLocked);
-    event RoundStarted(uint256 indexed roundId, uint256 startTime); // 新增事件
+    event RoundStarted(uint256 indexed roundId, uint256 startTime);
 
     constructor(address _token, address _currency) Ownable(msg.sender) {
         auctionToken = IERC20(_token);
         paymentCurrency = IERC20(_currency);
         
-        // 部署后默认开启第一轮
         lastClearingTime = block.timestamp;
         currentRoundId = 1;
         isRoundActive = true; 
@@ -63,11 +66,12 @@ contract BatchAuction is Ownable {
         }
     }
 
-    function placeBid(uint256 amount) external onlyWhitelisted {
-        require(isRoundActive, "Round is NOT active"); // 暂停时不准出价
+    // 🌟 修改点 2: 增加 _limitPrice 参数
+    function placeBid(uint256 amount, uint256 _limitPrice) external onlyWhitelisted {
+        require(isRoundActive, "Round is NOT active");
         require(amount > 0, "Amount > 0");
-        
-        // 简单的超时检查 (防止前端倒计时结束了还能偷鸡)
+        require(_limitPrice > 0, "Limit Price > 0"); // 必须有限价
+
         if (block.timestamp > lastClearingTime + ROUND_DURATION) {
             revert("Round time expired, waiting for clearing");
         }
@@ -77,10 +81,10 @@ contract BatchAuction is Ownable {
         userBids[currentRoundId][msg.sender] += amount;
         rounds[currentRoundId].totalBidAmount += amount;
         
-        emit BidPlaced(currentRoundId, msg.sender, amount);
+        // 🌟 修改点 3: 广播包含价格的事件 (这是给后端数据库听的关键信号)
+        emit BidPlaced(currentRoundId, msg.sender, amount, _limitPrice);
     }
 
-    // === 核心修改：结算后暂停 ===
     function executeClearing(uint256 _price) external onlyOwner {
         require(isRoundActive, "Round already cleared");
         require(block.timestamp >= lastClearingTime + ROUND_DURATION, "Time not up");
@@ -98,11 +102,9 @@ contract BatchAuction is Ownable {
         
         emit RoundCleared(currentRoundId, _price, round.totalBidAmount);
 
-        // 🌟 关键：结算后，关闭状态，不立即开启下一轮
         isRoundActive = false; 
     }
 
-    // === 新增：手动开启下一轮 ===
     function startNextRound() external onlyOwner {
         require(!isRoundActive, "Round is already active");
         

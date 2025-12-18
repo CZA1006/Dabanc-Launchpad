@@ -2,7 +2,7 @@ import { ethers } from "hardhat";
 
 // 确保这里的合约地址是您之前部署的那个
 // ⚠️ 必须是 Step 3 部署的那个新地址
-const AUCTION_ADDRESS = "0xc0653Cdd77f0351cD50BCa6318535ec816E422FA";
+const AUCTION_ADDRESS = "0xc9AeBb8D366113383BB243bD9299b3392C30421c"; // ✅ 新 Auction
 
 async function main() {
   const [deployer] = await ethers.getSigners();

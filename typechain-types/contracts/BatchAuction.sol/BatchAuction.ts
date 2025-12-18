@@ -99,7 +99,7 @@ export interface BatchAuctionInterface extends Interface {
   ): string;
   encodeFunctionData(
     functionFragment: "placeBid",
-    values: [BigNumberish]
+    values: [BigNumberish, BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "renounceOwnership",
@@ -200,13 +200,20 @@ export namespace BidPlacedEvent {
   export type InputTuple = [
     roundId: BigNumberish,
     user: AddressLike,
-    amount: BigNumberish
+    amount: BigNumberish,
+    limitPrice: BigNumberish
   ];
-  export type OutputTuple = [roundId: bigint, user: string, amount: bigint];
+  export type OutputTuple = [
+    roundId: bigint,
+    user: string,
+    amount: bigint,
+    limitPrice: bigint
+  ];
   export interface OutputObject {
     roundId: bigint;
     user: string;
     amount: bigint;
+    limitPrice: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -343,7 +350,11 @@ export interface BatchAuction extends BaseContract {
 
   paymentCurrency: TypedContractMethod<[], [string], "view">;
 
-  placeBid: TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
+  placeBid: TypedContractMethod<
+    [amount: BigNumberish, _limitPrice: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
 
   renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
 
@@ -424,7 +435,11 @@ export interface BatchAuction extends BaseContract {
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
     nameOrSignature: "placeBid"
-  ): TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
+  ): TypedContractMethod<
+    [amount: BigNumberish, _limitPrice: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
   getFunction(
     nameOrSignature: "renounceOwnership"
   ): TypedContractMethod<[], [void], "nonpayable">;
@@ -502,7 +517,7 @@ export interface BatchAuction extends BaseContract {
   >;
 
   filters: {
-    "BidPlaced(uint256,address,uint256)": TypedContractEvent<
+    "BidPlaced(uint256,address,uint256,uint256)": TypedContractEvent<
       BidPlacedEvent.InputTuple,
       BidPlacedEvent.OutputTuple,
       BidPlacedEvent.OutputObject

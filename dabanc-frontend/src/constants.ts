@@ -1,6 +1,6 @@
 // 1. 新的合约地址 (Sepolia) - 来自您刚才的部署输出
-export const AUCTION_ADDRESS = "0xc0653Cdd77f0351cD50BCa6318535ec816E422FA";
-export const USDC_ADDRESS = "0x1A4a30Bb71274bB38a432e8Afb65129C6aB37949";
+export const AUCTION_ADDRESS = "0xc9AeBb8D366113383BB243bD9299b3392C30421c"; // ✅ 新 Auction
+export const USDC_ADDRESS = "0x412E1Aa8223e17eC4b64F63C26D5B7E032B67Fbf";    // ✅ 新 USDC
 
 // 2. 升级版 ABI
 export const AUCTION_ABI = [
