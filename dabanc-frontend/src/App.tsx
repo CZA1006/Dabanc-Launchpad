@@ -1,186 +1,241 @@
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
-import { useState, useEffect } from 'react';
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { parseEther, formatEther } from 'viem';
 import { AUCTION_ADDRESS, USDC_ADDRESS, AUCTION_ABI, USDC_ABI } from './constants';
 
+// 🌟 增加 txHash 用于去重
+type Bid = { user: string; amount: number; limitPrice: number; timestamp: number; txHash: string; };
+
 export default function App() {
   const { address, isConnected } = useAccount();
+  const publicClient = usePublicClient();
+  
   const [amount, setAmount] = useState('100');
-  const [timeLeft, setTimeLeft] = useState(300);
+  const [limitPrice, setLimitPrice] = useState('15.0');
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [realBids, setRealBids] = useState<Bid[]>([]);
 
-  // 写入 Hooks
   const { writeContract, data: hash, isPending, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash });
 
-  // === 读取 Hooks (高频刷新) ===
+  // === 读取链上数据 (高频轮询) ===
   const { data: isRoundActive, refetch: refetchActive } = useReadContract({
-    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'isRoundActive',
-    query: { refetchInterval: 2000 }
+    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'isRoundActive', query: { refetchInterval: 2000 }
   });
 
   const { data: currentRoundId, refetch: refetchId } = useReadContract({
-    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'currentRoundId',
-    query: { refetchInterval: 2000 }
+    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'currentRoundId', query: { refetchInterval: 2000 }
   });
 
-  const { data: currentRoundData, refetch: refetchCurrent } = useReadContract({
-    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'rounds',
-    args: currentRoundId ? [currentRoundId] : undefined,
-    query: { refetchInterval: 2000 }
+  const { data: lastClearingTime, refetch: refetchTime } = useReadContract({
+    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'lastClearingTime', query: { refetchInterval: 2000 }
   });
 
   const { data: usdcBalance, refetch: refetchBalance } = useReadContract({
-    address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'balanceOf', args: address ? [address] : undefined,
-    query: { refetchInterval: 5000 }
+    address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'balanceOf', args: address ? [address] : undefined, query: { refetchInterval: 5000 }
   });
+
+  // === 🌟 核心升级：通用数据拉取函数 (Fetcher) ===
+  const fetchLogs = useCallback(async (fromBlock: bigint | 'earliest') => {
+    if (!currentRoundId || !publicClient) return;
+    try {
+      // 获取最新区块
+      const latestBlock = await publicClient.getBlockNumber();
+      
+      // 如果传入 earliest，为了安全起见（Alchemy限制），我们只查最近 19 个块
+      // 如果是轮询，通常传入的是 latestBlock - 5
+      let startBlock = fromBlock;
+      if (fromBlock === 'earliest') {
+          startBlock = latestBlock - 19n;
+      }
+      // 确保不为负数
+      if (typeof startBlock === 'bigint' && startBlock < 0n) startBlock = 0n;
+
+      const logs = await publicClient.getContractEvents({
+        address: AUCTION_ADDRESS, abi: AUCTION_ABI, eventName: 'BidPlaced',
+        args: { roundId: currentRoundId },
+        fromBlock: startBlock, 
+        toBlock: 'latest'
+      });
+
+      const newBids = await Promise.all(logs.map(async (log) => {
+           const block = await publicClient.getBlock({ blockHash: log.blockHash });
+           return {
+               // @ts-ignore
+               user: log.args.user,
+               // @ts-ignore
+               amount: Number(formatEther(log.args.amount)),
+               // @ts-ignore
+               limitPrice: Number(formatEther(log.args.limitPrice)),
+               timestamp: Number(block.timestamp) * 1000, 
+               txHash: log.transactionHash // 唯一ID
+           };
+      }));
+
+      // 智能去重合并
+      setRealBids(prev => {
+        const existingHashes = new Set(prev.map(b => b.txHash));
+        const uniqueNewBids = newBids.filter(b => !existingHashes.has(b.txHash));
+        if (uniqueNewBids.length > 0) {
+            console.log(`⚡ 自动更新: 新增 ${uniqueNewBids.length} 笔订单`);
+            // 按时间排序合并
+            return [...prev, ...uniqueNewBids].sort((a,b) => a.timestamp - b.timestamp);
+        }
+        return prev;
+      });
+    } catch (e) { 
+        console.error("Poll Error:", e); 
+    }
+  }, [currentRoundId, publicClient]);
+
+  // 1. 初始化加载 (查最近 20 块)
+  useEffect(() => {
+    fetchLogs('earliest');
+  }, [currentRoundId, fetchLogs]);
+
+  // 2. 🌟 主动轮询 (Auto-Refresh): 每 3 秒查一次最新数据
+  useEffect(() => {
+    const interval = setInterval(async () => {
+        if (!publicClient) return;
+        const bn = await publicClient.getBlockNumber();
+        // 只查最近 5 个块，极为轻量，绝对不会报错
+        fetchLogs(bn - 5n);
+    }, 3000); // 3秒刷新一次
+    return () => clearInterval(interval);
+  }, [fetchLogs, publicClient]);
+
+  // 换轮次时清空
+  useEffect(() => {
+    if (currentRoundId) { setRealBids([]); refetchTime(); } 
+  }, [currentRoundId]);
 
   // 倒计时逻辑
   useEffect(() => {
-    // 如果是活跃状态，重置为300并开始倒数；否则归零
-    if (isRoundActive) {
-       // 注意：这里为了演示简单，每次刷新页面或状态变更为活跃时都会重置为300
-       // 在生产环境中，应该读取链上 lastClearingTime 进行精确计算
-       setTimeLeft((prev) => prev > 0 ? prev : 300); 
-    } else {
-       setTimeLeft(0);
-    }
-  }, [isRoundActive]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setTimeLeft((t) => (t > 0 ? t - 1 : 0)), 1000);
+    const timer = setInterval(() => {
+      if (isRoundActive && lastClearingTime) {
+        const now = Math.floor(Date.now() / 1000);
+        const elapsed = now - Number(lastClearingTime);
+        const remaining = 300 - elapsed;
+        setTimeLeft(remaining > 0 ? remaining : 0);
+      } else {
+        setTimeLeft(0);
+      }
+    }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [isRoundActive, lastClearingTime]);
 
-  // 交易成功后刷新
-  useEffect(() => {
-    if (isConfirmed) {
-      refetchActive(); refetchId(); refetchCurrent(); refetchBalance(); reset();
+  useEffect(() => { if (isConfirmed) { refetchActive(); refetchId(); refetchBalance(); fetchLogs('earliest'); reset(); } }, [isConfirmed, fetchLogs]);
+
+  // === 撮合引擎 ===
+  const { estimatedPrice, orderBookDisplay } = useMemo(() => {
+    if (realBids.length === 0) return { estimatedPrice: "1.00", orderBookDisplay: [] };
+    const sortedBids = [...realBids].sort((a, b) => b.limitPrice - a.limitPrice);
+    
+    let accumulated = 0;
+    let clearingPrice = 1.0;
+    const SUPPLY = 500;
+
+    for (const bid of sortedBids) {
+        accumulated += bid.amount / bid.limitPrice;
+        if (accumulated >= SUPPLY) { clearingPrice = bid.limitPrice; break; }
     }
-  }, [isConfirmed]);
+    if (accumulated < SUPPLY && sortedBids.length > 0) clearingPrice = sortedBids[sortedBids.length - 1].limitPrice;
+    
+    const display = sortedBids.slice(0, 8).map(b => ({
+        price: b.limitPrice.toFixed(2), volume: b.amount.toFixed(0), isMatched: b.limitPrice >= clearingPrice
+    }));
+    return { estimatedPrice: clearingPrice.toFixed(2), orderBookDisplay: display };
+  }, [realBids]);
 
-  // === 按钮操作 ===
   const handleApprove = () => writeContract({ address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'approve', args: [AUCTION_ADDRESS, parseEther(amount)] });
-  const handleBid = () => writeContract({ address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'placeBid', args: [parseEther(amount)] });
+  const handleBid = () => writeContract({ address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'placeBid', args: [parseEther(amount), parseEther(limitPrice)] });
   const handleMint = () => writeContract({ address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'mint', args: [address!, parseEther('1000')] });
-  
-  // 🚀 管理员开启下一轮
   const handleStartNext = () => writeContract({ address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'startNextRound' });
 
-  // 辅助计算
-  const formatTime = (s: number) => `${Math.floor(s / 60)}:${s % 60 < 10 ? '0' : ''}${s % 60}`;
-  const currentTotal = currentRoundData ? Number(formatEther(currentRoundData[0])) : 0;
-  // 500 wSPX 发行量
-  const estimatedPrice = currentTotal > 0 ? (currentTotal / 500).toFixed(2) : "1.00";
+  const formatTimeStr = (s: number) => `${Math.floor(s / 60)}:${s % 60 < 10 ? '0' : ''}${s % 60}`;
 
   return (
-    <div style={{ padding: '40px', minHeight: '100vh', background: '#0f172a', color: 'white', fontFamily: 'sans-serif' }}>
-      <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-        
-        {/* 顶部 */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '40px' }}>
+    <div style={{ padding: '40px', minHeight: '100vh', background: '#0b0e11', color: '#e2e8f0', fontFamily: "'Inter', sans-serif" }}>
+      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '30px', borderBottom: '1px solid #2d3748', paddingBottom: '20px' }}>
           <div>
-            <h1 style={{margin: '0 0 5px 0'}}>SpaceX Launchpad</h1>
-            <span style={{fontSize: '12px', color: '#94a3b8'}}>DABANC Protocol | Sepolia Testnet</span>
+            <h1 style={{margin: '0 0 5px 0', fontSize: '24px', color: 'white'}}>SpaceX Equity <span style={{color: '#4ade80'}}>Orderbook</span></h1>
+            <span style={{fontSize: '12px', color: '#94a3b8'}}>Auto-Refreshing Live Data (Polling 3s)</span>
           </div>
           <ConnectButton />
         </div>
 
         {isConnected ? (
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '30px' }}>
-            
-            {/* 左侧主区域 */}
-            <div>
-              {/* === 状态 A: 竞价进行中 === */}
-              {isRoundActive ? (
-                <div style={{ background: '#1e293b', padding: '30px', borderRadius: '20px', border: '1px solid #334155' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-                    <div>
-                      <div style={{ color: '#94a3b8', fontSize: '12px', letterSpacing: '1px' }}>ROUND #{currentRoundId?.toString()}</div>
-                      <div style={{ fontSize: '48px', fontWeight: 'bold' }}>{formatTime(timeLeft)}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                 <div style={cardStyle}>
+                    <div style={labelStyle}>ROUND STATUS</div>
+                    <div style={{fontSize: '28px', fontWeight: 'bold', color: isRoundActive ? '#4ade80' : '#f87171'}}>
+                        {isRoundActive ? `LIVE #${currentRoundId?.toString()}` : 'SETTLED'}
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                       <div style={{ color: '#94a3b8', fontSize: '12px', letterSpacing: '1px' }}>EST. PRICE</div>
-                       <div style={{ fontSize: '48px', color: '#4ade80', fontWeight: 'bold' }}>${estimatedPrice}</div>
+                    <div style={{marginTop: '5px', fontSize: '14px', fontFamily: 'monospace'}}>
+                        ⏱️ {formatTimeStr(timeLeft)}
                     </div>
-                  </div>
-                  
-                  {/* 出价操作 */}
-                  <div style={{ background: '#0f172a', padding: '20px', borderRadius: '12px', marginTop: '20px' }}>
-                    <div style={{display: 'flex', alignItems: 'center'}}>
-                      <input type="number" value={amount} onChange={e=>setAmount(e.target.value)} style={{ background: 'transparent', border: 'none', color: 'white', fontSize: '28px', width: '100%', outline: 'none' }} />
-                      <span style={{color: '#64748b'}}>USDC</span>
-                    </div>
-                  </div>
-                  
-                  <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                    <button onClick={handleApprove} style={btnStyle}>1. 授权 (Approve)</button>
-                    <button onClick={handleBid} style={{...btnStyle, background: '#3b82f6', color: 'white'}}>2. 出价 (Place Bid)</button>
-                  </div>
-                  
-                  {isPending && <div style={{marginTop: '15px', color: '#fbbf24'}}>🔔 请在钱包中签名...</div>}
-                  {hash && isConfirming && <div style={{marginTop: '15px', color: '#60a5fa'}}>⏳ 交易确认中...</div>}
+                 </div>
+                 <div style={cardStyle}>
+                    <div style={labelStyle}>REAL-TIME CLEARING PRICE</div>
+                    <div style={{fontSize: '28px', fontWeight: 'bold', color: 'white'}}>${estimatedPrice}</div>
+                    <div style={{marginTop: '5px', fontSize: '12px', color: '#94a3b8'}}>Based on {realBids.length} active bids</div>
+                 </div>
+              </div>
 
-                  <div style={{marginTop: '15px'}}>
-                     <button onClick={handleMint} style={{background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', textDecoration: 'underline'}}>账户没钱? 点击领水</button>
+              {isRoundActive ? (
+                <div style={{...cardStyle, border: '1px solid #3b82f6'}}>
+                  <h3 style={{marginTop: 0, marginBottom: '20px', color: '#60a5fa'}}>Place Limit Order</h3>
+                  <div style={{display: 'flex', gap: '20px', marginBottom: '20px'}}>
+                    <div style={{flex: 1}}><div style={labelStyle}>BID AMOUNT (USDC)</div><input type="number" value={amount} onChange={e=>setAmount(e.target.value)} style={inputStyle} /></div>
+                    <div style={{flex: 1}}><div style={labelStyle}>LIMIT PRICE ($)</div><input type="number" value={limitPrice} onChange={e=>setLimitPrice(e.target.value)} style={inputStyle} /></div>
                   </div>
+                  <div style={{display: 'flex', gap: '10px'}}>
+                    <button onClick={handleApprove} disabled={isPending} style={secondaryBtn}>1. Approve</button>
+                    <button onClick={handleBid} disabled={isPending} style={primaryBtn}>2. Submit Order</button>
+                  </div>
+                  {hash && <div style={{marginTop: '15px', color: '#60a5fa'}}>⏳ Transaction Pending...</div>}
                 </div>
               ) : (
-                // === 状态 B: 竞价结束，显示结算报告 ===
-                <div style={{ background: '#f0fdf4', padding: '30px', borderRadius: '20px', border: '2px solid #22c55e', color: '#0f172a' }}>
-                  <div style={{ textAlign: 'center', marginBottom: '30px' }}>
-                    <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#15803d', marginBottom: '10px' }}>🏁 ROUND #{currentRoundId?.toString()} 结算完成</div>
-                    <div style={{ fontSize: '56px', fontWeight: '900', color: '#15803d' }}>
-                      ${estimatedPrice}
-                    </div>
-                    <div style={{ color: '#166534', fontWeight: 'bold' }}>最终清算价格 / wSPX</div>
-                  </div>
-
-                  <div style={{ background: 'rgba(255,255,255,0.6)', padding: '15px', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', marginBottom: '30px' }}>
-                    <span>本轮总募资:</span>
-                    <strong>{currentTotal} USDC</strong>
-                  </div>
-
-                  {/* 管理员控制区 */}
-                  <div style={{ background: '#14532d', padding: '25px', borderRadius: '16px', color: 'white', textAlign: 'center' }}>
-                    <div style={{ marginBottom: '15px', fontSize: '14px', opacity: 0.9 }}>👨‍✈️ 管理员控制台 (Admin Control)</div>
-                    <button 
-                      onClick={handleStartNext} 
-                      disabled={isPending || isConfirming}
-                      style={{ padding: '16px 40px', fontSize: '18px', fontWeight: 'bold', borderRadius: '50px', border: 'none', background: 'white', color: '#14532d', cursor: 'pointer', boxShadow: '0 4px 15px rgba(0,0,0,0.2)' }}
-                    >
-                      {isPending ? '启动中...' : '🚀 开启下一轮 (Start Next Round)'}
-                    </button>
-                  </div>
+                <div style={{...cardStyle, background: '#064e3b', border: '1px solid #059669', textAlign: 'center', padding: '40px'}}>
+                    <h2 style={{color: '#34d399'}}>✅ Round Settled</h2>
+                    <p>Final Price: <strong style={{fontSize: '24px'}}>${estimatedPrice}</strong></p>
+                    <div style={{marginTop: '20px'}}><button onClick={handleStartNext} style={{...primaryBtn, background: 'white', color: '#064e3b'}}>🚀 Start Next Round</button></div>
                 </div>
               )}
             </div>
 
-            {/* 右侧信息栏 */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div style={{ background: '#1e293b', padding: '20px', borderRadius: '16px' }}>
-                <h3 style={{marginTop: 0, fontSize: '14px', color: '#94a3b8'}}>MY BALANCE</h3>
-                <div style={{fontSize: '24px', fontWeight: 'bold'}}>{usdcBalance ? Number(formatEther(usdcBalance)).toFixed(2) : 0} USDC</div>
-              </div>
-              
-              <div style={{ background: '#1e293b', padding: '20px', borderRadius: '16px' }}>
-                <h3 style={{marginTop: 0, fontSize: '14px', color: '#94a3b8'}}>MARKET INFO</h3>
-                <div style={{marginBottom: '10px', fontSize: '14px', display: 'flex', justifyContent: 'space-between'}}>
-                  <span>Supply:</span> <span>500.0 wSPX</span>
+            <div style={cardStyle}>
+                <h3 style={{marginTop: 0, fontSize: '14px', color: '#94a3b8', borderBottom: '1px solid #2d3748', paddingBottom: '10px'}}>LIVE ORDERBOOK (Top 8)</h3>
+                <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#64748b', marginBottom: '10px'}}><span>Price ($)</span><span>Volume</span></div>
+                <div style={{display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '200px'}}>
+                    {orderBookDisplay.length === 0 && <div style={{textAlign: 'center', color: '#4a5568', marginTop: '50px'}}>Waiting for bids...</div>}
+                    {orderBookDisplay.map((order, i) => (
+                        <div key={i} style={{display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontFamily: 'monospace', opacity: order.isMatched ? 1 : 0.4}}>
+                            <span style={{color: order.isMatched ? '#4ade80' : '#f87171'}}>${order.price} {order.isMatched ? '✓' : ''}</span>
+                            <span style={{color: 'white'}}>{order.volume}</span>
+                        </div>
+                    ))}
                 </div>
-                <div style={{fontSize: '14px', display: 'flex', justifyContent: 'space-between'}}>
-                  <span>Network:</span> <span style={{color: '#4ade80'}}>Sepolia</span>
+                <div style={{marginTop: '30px', paddingTop: '20px', borderTop: '1px solid #2d3748'}}>
+                    <h3 style={{marginTop: 0, fontSize: '14px', color: '#94a3b8'}}>MY ASSETS</h3>
+                    <div style={{fontSize: '20px', fontWeight: 'bold'}}>{usdcBalance ? Number(formatEther(usdcBalance)).toFixed(2) : 0} USDC</div>
+                    <button onClick={handleMint} style={{background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer', fontSize: '12px', padding: 0, marginTop: '5px'}}>+ Mint Test Tokens</button>
                 </div>
-              </div>
             </div>
-
           </div>
-        ) : (
-          <div style={{textAlign: 'center', marginTop: '100px', color: '#94a3b8'}}>请连接钱包参与 SpaceX 股权竞价</div>
-        )}
+        ) : ( <div style={{textAlign: 'center', marginTop: '100px', color: '#94a3b8'}}>Please connect wallet.</div> )}
       </div>
     </div>
   );
 }
 
-const btnStyle = { flex: 1, padding: '15px', borderRadius: '10px', border: 'none', background: '#334155', color: '#cbd5e1', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' };
+const cardStyle = { background: '#1a202c', padding: '24px', borderRadius: '12px', border: '1px solid #2d3748' };
+const labelStyle = { fontSize: '12px', color: '#94a3b8', marginBottom: '8px', fontWeight: 'bold', letterSpacing: '0.5px' };
+const inputStyle = { width: '100%', padding: '12px', background: '#2d3748', border: '1px solid #4a5568', color: 'white', borderRadius: '8px', fontSize: '18px', boxSizing: 'border-box' as const };
+const btnBase = { flex: 1, padding: '14px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' };
+const primaryBtn = { ...btnBase, background: '#3b82f6', color: 'white' };
+const secondaryBtn = { ...btnBase, background: '#2d3748', color: '#cbd5e1' };
