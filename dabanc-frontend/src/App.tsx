@@ -4,7 +4,6 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { parseEther, formatEther } from 'viem';
 import { AUCTION_ADDRESS, USDC_ADDRESS, AUCTION_ABI, USDC_ABI } from './constants';
 
-// 🌟 增加 txHash 用于去重
 type Bid = { user: string; amount: number; limitPrice: number; timestamp: number; txHash: string; };
 
 export default function App() {
@@ -40,15 +39,15 @@ export default function App() {
   const fetchLogs = useCallback(async (fromBlock: bigint | 'earliest') => {
     if (!currentRoundId || !publicClient) return;
     try {
-      // 获取最新区块
       const latestBlock = await publicClient.getBlockNumber();
       
-      // 如果传入 earliest，为了安全起见（Alchemy限制），我们只查最近 19 个块
-      // 如果是轮询，通常传入的是 latestBlock - 5
       let startBlock = fromBlock;
+      // ⚠️ 关键修复：Alchemy Free Tier 限制查询范围为 10 个块
+      // 我们这里设置为 9n，确保不报错
       if (fromBlock === 'earliest') {
-          startBlock = latestBlock - 19n;
+          startBlock = latestBlock - 9n; 
       }
+      
       // 确保不为负数
       if (typeof startBlock === 'bigint' && startBlock < 0n) startBlock = 0n;
 
@@ -60,6 +59,7 @@ export default function App() {
       });
 
       const newBids = await Promise.all(logs.map(async (log) => {
+           // 获取区块时间
            const block = await publicClient.getBlock({ blockHash: log.blockHash });
            return {
                // @ts-ignore
@@ -79,7 +79,6 @@ export default function App() {
         const uniqueNewBids = newBids.filter(b => !existingHashes.has(b.txHash));
         if (uniqueNewBids.length > 0) {
             console.log(`⚡ 自动更新: 新增 ${uniqueNewBids.length} 笔订单`);
-            // 按时间排序合并
             return [...prev, ...uniqueNewBids].sort((a,b) => a.timestamp - b.timestamp);
         }
         return prev;
@@ -89,7 +88,7 @@ export default function App() {
     }
   }, [currentRoundId, publicClient]);
 
-  // 1. 初始化加载 (查最近 20 块)
+  // 1. 初始化加载 (只查最近 9 块)
   useEffect(() => {
     fetchLogs('earliest');
   }, [currentRoundId, fetchLogs]);
@@ -99,9 +98,9 @@ export default function App() {
     const interval = setInterval(async () => {
         if (!publicClient) return;
         const bn = await publicClient.getBlockNumber();
-        // 只查最近 5 个块，极为轻量，绝对不会报错
-        fetchLogs(bn - 5n);
-    }, 3000); // 3秒刷新一次
+        // 轮询只查最近 4 个块，极度安全
+        fetchLogs(bn - 4n);
+    }, 3000); 
     return () => clearInterval(interval);
   }, [fetchLogs, publicClient]);
 
@@ -161,7 +160,7 @@ export default function App() {
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '30px', borderBottom: '1px solid #2d3748', paddingBottom: '20px' }}>
           <div>
             <h1 style={{margin: '0 0 5px 0', fontSize: '24px', color: 'white'}}>SpaceX Equity <span style={{color: '#4ade80'}}>Orderbook</span></h1>
-            <span style={{fontSize: '12px', color: '#94a3b8'}}>Auto-Refreshing Live Data (Polling 3s)</span>
+            <span style={{fontSize: '12px', color: '#94a3b8'}}>Syncing with Sepolia Chain Time & Live Data</span>
           </div>
           <ConnectButton />
         </div>

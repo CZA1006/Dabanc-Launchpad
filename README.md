@@ -1,89 +1,132 @@
-# Dabanc Launchpad Protocol · Institutional RWA Launchpad 🚀
+# Dabanc Launchpad Protocol · 机构级 RWA 发行平台 🚀
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) ![Ethereum](https://img.shields.io/badge/network-Ethereum%20Sepolia-3C3C3D) ![TypeScript](https://img.shields.io/badge/language-TypeScript-3178C6)
 
-Dabanc is an institutional-grade RWA issuance platform simulating a fair launch for **SpaceX Equity Tokens (wSPX)** on Sepolia. The protocol combines a discrete batch auction to stop MEV/gas wars with an on-chain green shoe mechanism to dampen post-settlement volatility.
+**Dabanc** 是一个机构级的 RWA (Real World Asset) 资产发行平台，目前正在 Sepolia 测试网上模拟 **SpaceX 股权代币 (wSPX)** 的公平发射。
 
-Key capabilities:
-- ⏱️ **5-Minute Batch Auction:** Orders are accumulated for 5 minutes; a uniform clearing price is computed off-chain and settled on-chain with `Price = Total Raised / Token Supply`, avoiding AMM-style race conditions.
-- 🛡️ **Green Shoe Stabilization:** 15% of raised capital is automatically routed to `GreenShoeVault` on settlement to support price stability instead of flowing to the project owner.
-- 🤖 **Hybrid Architecture:** A Node.js keeper (`scripts/auto_bot.ts`) watches the clock and triggers `executeClearing` when a round ends.
-- 📈 **Real-Time Pricing Engine:** Frontend streams pool size and shows the estimated clearing price as bids arrive.
-- ✅ **KYC/Whitelist:** `onlyWhitelisted` gating blocks bids from non-approved wallets.
+本项目采用创新的 **“混合架构限价集合竞价 (Hybrid Limit-Order Batch Auction)”** 机制，结合了链下撮合的高效与链上结算的透明，彻底解决了传统 DeFi 发行中的 MEV 攻击和 Gas 战争问题。
 
-## Architecture Overview
+## 🌟 核心功能 (Key Capabilities)
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant Frontend
-    participant Contract as Smart Contract
-    participant Bot as Auto-Bot
-    participant Vault as GreenShoe Vault
+* **⏱️ 5分钟限价集合竞价 (Limit Order Batch Auction):**
+    * 用户提交 **限价单 (Limit Order)**（金额 + 心理最高价）。
+    * 每一轮持续 5 分钟，期间不进行结算。
+    * 结束时，后端算法根据供需曲线计算统一 **清算价 (Clearing Price)**。高于此价格的买单成交，低于此价格的买单将被退款/淘汰。
+* **🛡️ 链上绿鞋机制 (Green Shoe Stabilization):**
+    * 智能合约自动将 15% 的募资额锁定进入 `GreenShoeVault` 金库，而非流向项目方，用于上市后的价格护盘。
+* **🤖 混合架构撮合引擎 (Hybrid Matching Engine):**
+    * **后端:** 使用 SQLite (`better-sqlite3`) 实时记录链上订单并构建订单簿，计算边际价格。
+    * **链上:** 智能合约负责资金托管和最终结算，确保资金安全。
+* **📈 实时动态订单簿 (Real-Time Orderbook):**
+    * 前端界面通过主动轮询机制，实时展示深度图和预计清算价，体验媲美中心化交易所 (CEX)。
+* **⚡ 高频流量模拟器 (Traffic Simulator):**
+    * 内置测试脚本，可模拟数十个并发用户进行随机报价，演示真实的市场博弈场景。
 
-    User->>Frontend: Place bid
-    Frontend->>Contract: depositBid()
-    Bot-->Contract: Check round end time
-    Bot->>Contract: executeClearing()
-    Contract-->>Vault: Divert 15% to vault
-    Contract-->>Frontend: Emit settlement events
-    Frontend-->>User: Settlement report & refreshed price
-```
+## 🏗️ 技术栈架构
 
-## Technology Stack
+* **合约层:** Solidity 0.8.20, Hardhat
+* **后端/脚本:** TypeScript, Ethers.js, **Better-Sqlite3 (本地撮合数据库)**
+* **前端:** React, Vite, RainbowKit, Wagmi v2 (主动轮询架构)
 
-- **Backend:** Solidity 0.8.20, Hardhat, Ethers.js
-- **Frontend:** Next.js 14, RainbowKit, Wagmi v2, Viem
+---
 
-## Getting Started
+## 🚀 快速开始 (Getting Started)
 
-### Prerequisites
+### 1. 环境准备
+* Node.js (LTS 版本)
+* MetaMask (连接到 Sepolia 测试网)
+* Alchemy API Key (用于 Sepolia RPC)
 
-- Node.js LTS
-- MetaMask connected to Sepolia
-- Alchemy Sepolia API key
+### 2. 后端部署与设置 (`/root`)
 
-### Backend Setup
+1.  安装依赖：
+    ```bash
+    npm install
+    ```
+2.  配置环境变量：
+    创建 `.env` 文件并填入：
+    ```env
+    PRIVATE_KEY=你的私钥
+    SEPOLIA_RPC_URL=[https://eth-sepolia.g.alchemy.com/v2/你的KEY](https://eth-sepolia.g.alchemy.com/v2/你的KEY)
+    ```
+3.  **初始化本地数据库 (必须):**
+    ```bash
+    npx hardhat run scripts/setup_db.ts
+    ```
+4.  编译合约：
+    ```bash
+    npx hardhat compile
+    ```
+5.  部署到 Sepolia：
+    ```bash
+    npx hardhat run scripts/deploy_sepolia.ts --network sepolia
+    ```
+6.  **添加白名单 (关键步骤):**
+    * 修改 `scripts/whitelist_user.ts` 中的合约地址。
+    * 运行脚本以授权你的账户参与竞价：
+    ```bash
+    npx hardhat run scripts/whitelist_user.ts --network sepolia
+    ```
 
-1) `cd backend` then install deps: `npm install`  
-2) Create `.env` with:
-   - `PRIVATE_KEY=your_deployer_key`
-   - `SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/<KEY>`
-3) Compile contracts: `npx hardhat compile`
-4) Deploy to Sepolia:  
-   `npx hardhat run scripts/deploy_sepolia.ts --network sepolia`
-5) **Whitelist users (critical or bids will revert with gas errors):**  
-   `npx hardhat run scripts/whitelist_user.ts --network sepolia`  
-   Run this for each wallet that should be allowed to bid.
-6) Start the keeper/oracle bot in a separate terminal:  
-   `npx hardhat run scripts/auto_bot.ts --network sepolia`  
-   The bot checks when a 5-minute window closes and calls `executeClearing`.
+### 3. 前端启动 (`/dabanc-frontend`)
 
-### Frontend Setup
+1.  进入前端目录并安装依赖：
+    ```bash
+    cd dabanc-frontend
+    npm install
+    ```
+2.  配置合约地址：
+    * 打开 `src/constants.ts`。
+    * 填入部署脚本输出的最新 `Auction` 和 `USDC` 地址。
+3.  启动网页：
+    ```bash
+    npm run dev
+    ```
 
-1) `cd frontend` then install deps: `npm install`  
-2) Update deployment addresses in `constants.ts` (`Auction`, `USDC`, `wSPX`, `GreenShoeVault`).  
-3) Run the app: `npm run dev` and open the provided local URL.
+---
 
-## Usage Guide (The Demo Flow)
+## 🎬 演示流程 (The Demo Flow)
 
-1) Connect your wallet to Sepolia in the UI.  
-2) Grab mock USDC from the faucet link in the app.  
-3) Approve USDC and place a bid; watch the estimated clearing price move in real time.  
-4) Wait for the bot terminal to show `executeClearing` once the 5-minute round ends.  
-5) The frontend auto-refreshes and shows the 🟩 Settlement Report card with the clearing price and green shoe allocation.  
-6) As admin, click **Start Next Round** to reset and begin the next batch.
+为了呈现最佳的 **30分钟演示效果**，请严格按照以下顺序启动终端：
 
-## Troubleshooting
+**第一步：启动前端 (界面)**
+* 运行 `cd dabanc-frontend && npm run dev`。
+* 打开浏览器，连接钱包。此时页面应显示 "LIVE" 且订单簿为空。
 
-- **Error:** "Transaction gas limit too high" → **Solution:** Your wallet is not whitelisted. Run `scripts/whitelist_user.ts` for that address.  
-- **Error:** "Buttons not working" → **Solution:** Ensure `scripts/auto_bot.ts` is running in another terminal so settlements can progress.
+**第二步：启动撮合机器人 (大脑)**
+* 在根目录运行：
+    ```bash
+    npx hardhat run scripts/auto_bot.ts --network sepolia
+    ```
+* 机器人将开始监听链上事件，并每 5 分钟自动触发一次结算。
 
-## Deployed Contracts (Sepolia)
+**第三步：启动流量模拟器 (气氛组)**
+* 在根目录运行：
+    ```bash
+    npx hardhat run scripts/simulate_traffic.ts --network sepolia
+    ```
+* **效果：** 你会看到终端里疯狂刷出订单日志，同时前端网页上的 **实时订单簿** 和 **预估价格** 开始疯狂跳动！
 
-| Contract         | Address |
-| ---------------- | -------- |
-| Auction          | `0x...` |
-| USDC             | `0x...` |
-| wSPX             | `0x...` |
-| GreenShoeVault   | `0x...` |
+---
+
+## 📋 已部署合约 (Sepolia)
+
+| 合约名称 | 地址 | 说明 |
+| :--- | :--- | :--- |
+| **Auction** | `0xc9AeBb8D366113383BB243bD9299b3392C30421c` | 核心竞价合约 |
+| **USDC** | `0x412E1Aa8223e17eC4b64F63C26D5B7E032B67Fbf` | 测试支付代币 |
+| **wSPX** | `0xd9b664096267455479C43875d1BfD670C0586b4E` | SpaceX 股权代币 |
+| **Vault** | `0xBe78D97739C41BD2eD18d30832a72f99F71916FA` | 绿鞋资金托管金库 |
+
+## 🛠️ 常见问题排查
+
+* **报错:** `Transaction gas limit too high`
+    * **原因:** 你的账户不在白名单中，被合约拦截了。
+    * **解决:** 运行 `npx hardhat run scripts/whitelist_user.ts --network sepolia`。
+
+* **报错:** `Alchemy Free Tier limit (400 Bad Request)`
+    * **原因:** 前端请求的历史区块跨度太大。
+    * **解决:** 我们已更新前端代码，采用 **“主动轮询 (Active Polling)”** 策略，每 3 秒只查最近 5 个区块，完美适配免费节点。
+
+* **现象:** 前端倒计时不准
+    * **解决:** 确保 `auto_bot.ts` 正在运行，它负责推动链上的时间轮次。前端会自动同步链上的 `lastClearingTime`。
