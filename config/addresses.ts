@@ -36,11 +36,11 @@ export const ADDRESSES = {
   // 支付代币 (USDC)
   usdc: process.env.USDC_ADDRESS || "",
   
-  // 拍卖代币 (如 wSPX)
-  auctionToken: process.env.AUCTION_TOKEN_ADDRESS || "",
+  // 拍卖代币 (如 wSPX) - 支持两种命名
+  auctionToken: process.env.TOKEN_ADDRESS || process.env.AUCTION_TOKEN_ADDRESS || "",
   
-  // 绿鞋金库
-  greenShoeVault: process.env.GREEN_SHOE_VAULT_ADDRESS || "",
+  // 绿鞋金库 - 支持两种命名
+  greenShoeVault: process.env.VAULT_ADDRESS || process.env.GREEN_SHOE_VAULT_ADDRESS || "",
 } as const;
 
 /**
@@ -109,6 +109,9 @@ export const BOT_CONFIG = {
   
   // 最大清算价格
   maxClearingPrice: Number(process.env.MAX_CLEARING_PRICE) || 1000,
+  
+  // 🆕 清算后自动提款 (默认关闭)
+  autoWithdraw: process.env.BOT_AUTO_WITHDRAW === "true",
 } as const;
 
 /**

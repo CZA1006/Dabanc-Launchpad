@@ -10,7 +10,8 @@ import {
   useWriteContract, 
   useWaitForTransactionReceipt, 
   usePublicClient,
-  useWatchContractEvent
+  useWatchContractEvent,
+  useChainId
 } from 'wagmi';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { parseEther, formatEther } from 'viem';
@@ -47,6 +48,10 @@ interface UserPosition {
 export default function App() {
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
+  const chainId = useChainId();
+  
+  // 网络名称映射
+  const networkName = chainId === 11155111 ? 'Sepolia' : chainId === 31337 ? 'Anvil' : `Chain ${chainId}`;
   
   // === 状态管理 ===
   const [amount, setAmount] = useState('500');
@@ -125,6 +130,74 @@ export default function App() {
     args: address ? [address] : undefined,
   });
 
+  // === 用户历史轮次分配信息 ===
+  // 获取上一轮的分配结果（如果已清算）
+  const previousRoundId = currentRoundId && Number(currentRoundId) > 1 ? Number(currentRoundId) - 1 : 0;
+  
+  const { data: previousRoundInfo } = useReadContract({
+    address: AUCTION_ADDRESS,
+    abi: AUCTION_ABI,
+    functionName: 'rounds',
+    args: previousRoundId ? [BigInt(previousRoundId)] : undefined,
+    query: { refetchInterval: 5000 }
+  });
+
+  const { data: userPreviousRoundDetails, refetch: refetchUserDetails } = useReadContract({
+    address: AUCTION_ADDRESS,
+    abi: AUCTION_ABI,
+    functionName: 'getUserBidDetails',
+    args: previousRoundId && address ? [BigInt(previousRoundId), address] : undefined,
+    query: { refetchInterval: 5000 }
+  });
+
+  // 解析用户分配信息
+  const userSettlement = useMemo(() => {
+    if (!userPreviousRoundDetails || !previousRoundInfo) return null;
+    
+    const [totalAmount, tokensAllocated, refundAmount, hasClaimed, hasRefunded] = userPreviousRoundDetails as [bigint, bigint, bigint, boolean, boolean];
+    const [_, clearingPrice, __, isCleared] = previousRoundInfo as [bigint, bigint, bigint, boolean];
+    
+    if (!isCleared || totalAmount === BigInt(0)) return null;
+    
+    const totalBid = Number(formatEther(totalAmount));
+    const tokens = Number(formatEther(tokensAllocated));
+    const refund = Number(formatEther(refundAmount));
+    const price = Number(formatEther(clearingPrice));
+    const actualPaid = totalBid - refund;
+    
+    return {
+      roundId: previousRoundId,
+      totalBid,
+      tokensAllocated: tokens,
+      refundAmount: refund,
+      actualPaid,
+      clearingPrice: price,
+      hasClaimed,
+      hasRefunded
+    };
+  }, [userPreviousRoundDetails, previousRoundInfo, previousRoundId]);
+
+  // === 领取代币和退款函数 ===
+  const handleClaimTokens = () => {
+    if (!userSettlement) return;
+    writeContract({
+      address: AUCTION_ADDRESS,
+      abi: AUCTION_ABI,
+      functionName: 'claimTokens',
+      args: [BigInt(userSettlement.roundId)]
+    });
+  };
+
+  const handleClaimRefund = () => {
+    if (!userSettlement) return;
+    writeContract({
+      address: AUCTION_ADDRESS,
+      abi: AUCTION_ABI,
+      functionName: 'claimRefund',
+      args: [BigInt(userSettlement.roundId)]
+    });
+  };
+
   // === 事件监听 (实时更新) ===
   useWatchContractEvent({
     address: AUCTION_ADDRESS,
@@ -166,7 +239,8 @@ export default function App() {
     
     try {
       const latestBlock = await publicClient.getBlockNumber();
-      const startBlock = latestBlock > 100n ? latestBlock - 100n : 0n;
+      // 扩大搜索范围：最近 5000 个区块（约 16 小时）
+      const startBlock = latestBlock > 5000n ? latestBlock - 5000n : 0n;
 
       const logs = await publicClient.getContractEvents({
         address: AUCTION_ADDRESS, 
@@ -1185,6 +1259,96 @@ export default function App() {
           margin-bottom: 24px;
         }
         
+        /* 新结算结果面板样式 */
+        .settlement-result {
+          text-align: left;
+        }
+        
+        .settlement-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 10px 0;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+          font-size: 14px;
+        }
+        
+        .settlement-row:last-of-type {
+          border-bottom: none;
+        }
+        
+        .settlement-row.highlight {
+          background: rgba(0, 255, 136, 0.05);
+          margin: 0 -12px;
+          padding: 10px 12px;
+          border-radius: 6px;
+        }
+        
+        .settlement-row .success {
+          color: var(--accent-green);
+          font-weight: 600;
+        }
+        
+        .settlement-row .warning {
+          color: var(--accent-yellow);
+          font-weight: 600;
+        }
+        
+        .settlement-actions {
+          margin-top: 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        
+        .claim-btn {
+          width: 100%;
+          padding: 14px 20px;
+          border-radius: var(--radius-md);
+          font-size: 14px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+        
+        .claim-btn.primary {
+          background: linear-gradient(135deg, var(--accent-green), var(--accent-cyan));
+          color: #000;
+          border: none;
+        }
+        
+        .claim-btn.primary:hover:not(:disabled) {
+          transform: translateY(-2px);
+          box-shadow: var(--shadow-glow-green);
+        }
+        
+        .claim-btn.secondary {
+          background: transparent;
+          color: var(--accent-yellow);
+          border: 1px solid var(--accent-yellow);
+        }
+        
+        .claim-btn.secondary:hover:not(:disabled) {
+          background: rgba(255, 193, 7, 0.1);
+        }
+        
+        .claim-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        
+        .claim-status {
+          text-align: center;
+          padding: 10px;
+          border-radius: var(--radius-md);
+          font-size: 13px;
+        }
+        
+        .claim-status.success {
+          background: rgba(0, 255, 136, 0.1);
+          color: var(--accent-green);
+        }
+        
         .btn-next-round {
           padding: 16px 32px;
           background: var(--accent-green);
@@ -1278,7 +1442,8 @@ export default function App() {
           <div className="header-right">
             <div className="network-status">
               <div className={`network-dot ${networkStatus}`}></div>
-              <span>Sepolia</span>
+              <span>{networkName}</span>
+              {chainId !== 11155111 && <span style={{color: 'var(--accent-yellow)'}}>⚠️ 请切换到 Sepolia</span>}
               <span>•</span>
               <span>更新于 {formatters.relativeTime(lastUpdate)}</span>
             </div>
@@ -1347,12 +1512,18 @@ export default function App() {
                 </div>
                 
                 <div className="metric-card highlight">
-                  <div className="metric-label">预计清算价</div>
+                  <div className="metric-label">
+                    {roundData && roundData[3] ? '链上清算价' : '预计清算价'}
+                  </div>
                   <div className="metric-value cyan">
-                    ${formatters.price(estimatedPrice)}
+                    ${roundData && roundData[3] && roundData[1] > 0n
+                      ? formatters.price(Number(formatEther(roundData[1])))
+                      : formatters.price(estimatedPrice)}
                   </div>
                   <div className="metric-sub">
-                    基于 {realBids.length} 笔出价
+                    {roundData && roundData[3] 
+                      ? '✅ 已清算' 
+                      : `基于 ${realBids.length} 笔链上出价`}
                   </div>
                 </div>
                 
@@ -1504,7 +1675,9 @@ export default function App() {
                   <div className="settlement-icon">🎉</div>
                   <div className="settlement-title">Round #{currentRoundId?.toString()} 已结算</div>
                   <div className="settlement-price">
-                    最终清算价: ${formatters.price(estimatedPrice)}
+                    最终清算价: ${roundData && roundData[1] > 0n 
+                      ? formatters.price(Number(formatEther(roundData[1])))
+                      : formatters.price(estimatedPrice)}
                   </div>
                   <div className="settlement-info">
                     本轮共 {realBids.length} 笔出价参与
@@ -1652,6 +1825,65 @@ export default function App() {
                   💰 领取测试 USDC (10,000)
                 </button>
               </div>
+
+              {/* === 上轮结算结果 === */}
+              {userSettlement && (
+                <div className="assets-panel settlement-panel">
+                  <div className="assets-title">🎉 Round #{userSettlement.roundId} 结算结果</div>
+                  <div className="settlement-result">
+                    <div className="settlement-row highlight">
+                      <span>清算价格</span>
+                      <span className="mono success">${formatters.price(userSettlement.clearingPrice)}</span>
+                    </div>
+                    <div className="settlement-row">
+                      <span>您的总出价</span>
+                      <span className="mono">{formatters.amount(userSettlement.totalBid)} USDC</span>
+                    </div>
+                    <div className="settlement-row highlight">
+                      <span>🪙 获得代币</span>
+                      <span className="mono success">{formatters.amount(userSettlement.tokensAllocated)} wSPX</span>
+                    </div>
+                    <div className="settlement-row">
+                      <span>💵 实际花费</span>
+                      <span className="mono">{formatters.amount(userSettlement.actualPaid)} USDC</span>
+                    </div>
+                    {userSettlement.refundAmount > 0 && (
+                      <div className="settlement-row highlight">
+                        <span>💰 可退款金额</span>
+                        <span className="mono warning">{formatters.amount(userSettlement.refundAmount)} USDC</span>
+                      </div>
+                    )}
+                    
+                    <div className="settlement-actions">
+                      {!userSettlement.hasClaimed && userSettlement.tokensAllocated > 0 && (
+                        <button 
+                          className="claim-btn primary"
+                          onClick={handleClaimTokens}
+                          disabled={isPending}
+                        >
+                          {isPending ? '⏳ 处理中...' : '🎁 领取 wSPX 代币'}
+                        </button>
+                      )}
+                      {userSettlement.hasClaimed && userSettlement.tokensAllocated > 0 && (
+                        <div className="claim-status success">✅ 代币已领取</div>
+                      )}
+                      
+                      {!userSettlement.hasRefunded && userSettlement.refundAmount > 0 && (
+                        <button 
+                          className="claim-btn secondary"
+                          onClick={handleClaimRefund}
+                          disabled={isPending}
+                        >
+                          {isPending ? '⏳ 处理中...' : '💸 领取退款'}
+                        </button>
+                      )}
+                      {userSettlement.hasRefunded && userSettlement.refundAmount > 0 && (
+                        <div className="claim-status success">✅ 退款已领取</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* === 项目信息卡 === */}
               <div className="assets-panel">
