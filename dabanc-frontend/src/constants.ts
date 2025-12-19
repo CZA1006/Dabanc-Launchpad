@@ -3,8 +3,8 @@
 // ============================================
 
 // === 合约地址 (Sepolia Testnet) ===
-export const AUCTION_ADDRESS = "0x9b01CdD020D0DD7c6385b46ab3D809562c94Ac09" as const;
-export const USDC_ADDRESS = "0x2cBaba4B3693220AF90d5798165bB48bF192e029" as const;
+export const AUCTION_ADDRESS = "0x62e2923995625bD0659024Eb5caC4a73aAd8917A" as const;
+export const USDC_ADDRESS = "0x7eDA0a75366E2D361bB0de07FACC7a44E8b3A268" as const;
 
 // === 项目配置 ===
 export const PROJECT_CONFIG = {
