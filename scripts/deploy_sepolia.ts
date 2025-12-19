@@ -20,12 +20,18 @@ async function main() {
   await spaceX.waitForDeployment();
   console.log(`✅ wSPX 合约: ${await spaceX.getAddress()}`);
 
-  // 3. 部署拍卖合约
+  // 3. 部署拍卖合约 (添加总供应量参数)
   console.log("\nStep 3: 部署 Auction 核心合约...");
+  const TOTAL_SUPPLY = ethers.parseEther("10000000"); // 1000万 wSPX 总供应量
   const Auction = await ethers.getContractFactory("BatchAuction");
-  const auction = await Auction.deploy(await spaceX.getAddress(), await usdc.getAddress());
+  const auction = await Auction.deploy(
+    await spaceX.getAddress(), 
+    await usdc.getAddress(),
+    TOTAL_SUPPLY
+  );
   await auction.waitForDeployment();
   console.log(`✅ Auction 合约: ${await auction.getAddress()}`);
+  console.log(`   总供应量: ${ethers.formatEther(TOTAL_SUPPLY)} wSPX`);
 
   // 4. 部署绿鞋金库
   console.log("\nStep 4: 部署绿鞋金库...");

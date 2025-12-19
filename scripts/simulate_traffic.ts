@@ -1,8 +1,8 @@
 import { ethers } from "hardhat";
 
-// 填入最新地址
-const AUCTION_ADDRESS = "0xc9AeBb8D366113383BB243bD9299b3392C30421c"; 
-const USDC_ADDRESS = "0x412E1Aa8223e17eC4b64F63C26D5B7E032B67Fbf";
+// Anvil 本地部署地址
+const AUCTION_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"; 
+const USDC_ADDRESS = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
 const CONFIG = {
   minPrice: 1, maxPrice: 20,

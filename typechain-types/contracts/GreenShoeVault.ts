@@ -26,23 +26,43 @@ import type {
 export interface GreenShoeVaultInterface extends Interface {
   getFunction(
     nameOrSignature:
+      | "approvedDexAddresses"
       | "auctionContract"
       | "currency"
       | "depositStabilizationFunds"
+      | "emergencyWithdraw"
       | "executeBuyback"
+      | "getBalance"
+      | "getStats"
       | "owner"
+      | "pause"
+      | "paused"
       | "renounceOwnership"
+      | "setApprovedDex"
+      | "setApprovedDexBatch"
       | "setAuctionContract"
+      | "totalReceived"
+      | "totalUsedForBuyback"
       | "transferOwnership"
+      | "unpause"
   ): FunctionFragment;
 
   getEvent(
     nameOrSignatureOrTopic:
+      | "AuctionContractUpdated"
+      | "DexApprovalUpdated"
+      | "EmergencyWithdraw"
       | "FundsReceived"
       | "FundsUsedForStabilization"
       | "OwnershipTransferred"
+      | "Paused"
+      | "Unpaused"
   ): EventFragment;
 
+  encodeFunctionData(
+    functionFragment: "approvedDexAddresses",
+    values: [AddressLike]
+  ): string;
   encodeFunctionData(
     functionFragment: "auctionContract",
     values?: undefined
@@ -53,23 +73,55 @@ export interface GreenShoeVaultInterface extends Interface {
     values: [BigNumberish]
   ): string;
   encodeFunctionData(
+    functionFragment: "emergencyWithdraw",
+    values: [AddressLike, BigNumberish]
+  ): string;
+  encodeFunctionData(
     functionFragment: "executeBuyback",
     values: [BigNumberish, AddressLike]
   ): string;
+  encodeFunctionData(
+    functionFragment: "getBalance",
+    values?: undefined
+  ): string;
+  encodeFunctionData(functionFragment: "getStats", values?: undefined): string;
   encodeFunctionData(functionFragment: "owner", values?: undefined): string;
+  encodeFunctionData(functionFragment: "pause", values?: undefined): string;
+  encodeFunctionData(functionFragment: "paused", values?: undefined): string;
   encodeFunctionData(
     functionFragment: "renounceOwnership",
     values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "setApprovedDex",
+    values: [AddressLike, boolean]
+  ): string;
+  encodeFunctionData(
+    functionFragment: "setApprovedDexBatch",
+    values: [AddressLike[], boolean]
   ): string;
   encodeFunctionData(
     functionFragment: "setAuctionContract",
     values: [AddressLike]
   ): string;
   encodeFunctionData(
+    functionFragment: "totalReceived",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "totalUsedForBuyback",
+    values?: undefined
+  ): string;
+  encodeFunctionData(
     functionFragment: "transferOwnership",
     values: [AddressLike]
   ): string;
+  encodeFunctionData(functionFragment: "unpause", values?: undefined): string;
 
+  decodeFunctionResult(
+    functionFragment: "approvedDexAddresses",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(
     functionFragment: "auctionContract",
     data: BytesLike
@@ -80,12 +132,28 @@ export interface GreenShoeVaultInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
+    functionFragment: "emergencyWithdraw",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
     functionFragment: "executeBuyback",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(functionFragment: "getBalance", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "getStats", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "owner", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "pause", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "paused", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "renounceOwnership",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "setApprovedDex",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "setApprovedDexBatch",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -93,9 +161,57 @@ export interface GreenShoeVaultInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
+    functionFragment: "totalReceived",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "totalUsedForBuyback",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
     functionFragment: "transferOwnership",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(functionFragment: "unpause", data: BytesLike): Result;
+}
+
+export namespace AuctionContractUpdatedEvent {
+  export type InputTuple = [oldContract: AddressLike, newContract: AddressLike];
+  export type OutputTuple = [oldContract: string, newContract: string];
+  export interface OutputObject {
+    oldContract: string;
+    newContract: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace DexApprovalUpdatedEvent {
+  export type InputTuple = [dex: AddressLike, approved: boolean];
+  export type OutputTuple = [dex: string, approved: boolean];
+  export interface OutputObject {
+    dex: string;
+    approved: boolean;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace EmergencyWithdrawEvent {
+  export type InputTuple = [token: AddressLike, amount: BigNumberish];
+  export type OutputTuple = [token: string, amount: bigint];
+  export interface OutputObject {
+    token: string;
+    amount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
 }
 
 export namespace FundsReceivedEvent {
@@ -129,6 +245,30 @@ export namespace OwnershipTransferredEvent {
   export interface OutputObject {
     previousOwner: string;
     newOwner: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace PausedEvent {
+  export type InputTuple = [account: AddressLike];
+  export type OutputTuple = [account: string];
+  export interface OutputObject {
+    account: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace UnpausedEvent {
+  export type InputTuple = [account: AddressLike];
+  export type OutputTuple = [account: string];
+  export interface OutputObject {
+    account: string;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -179,6 +319,12 @@ export interface GreenShoeVault extends BaseContract {
     event?: TCEvent
   ): Promise<this>;
 
+  approvedDexAddresses: TypedContractMethod<
+    [arg0: AddressLike],
+    [boolean],
+    "view"
+  >;
+
   auctionContract: TypedContractMethod<[], [string], "view">;
 
   currency: TypedContractMethod<[], [string], "view">;
@@ -189,15 +335,51 @@ export interface GreenShoeVault extends BaseContract {
     "nonpayable"
   >;
 
+  emergencyWithdraw: TypedContractMethod<
+    [token: AddressLike, amount: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
+
   executeBuyback: TypedContractMethod<
     [amount: BigNumberish, dexAddress: AddressLike],
     [void],
     "nonpayable"
   >;
 
+  getBalance: TypedContractMethod<[], [bigint], "view">;
+
+  getStats: TypedContractMethod<
+    [],
+    [
+      [bigint, bigint, bigint] & {
+        balance: bigint;
+        received: bigint;
+        usedForBuyback: bigint;
+      }
+    ],
+    "view"
+  >;
+
   owner: TypedContractMethod<[], [string], "view">;
 
+  pause: TypedContractMethod<[], [void], "nonpayable">;
+
+  paused: TypedContractMethod<[], [boolean], "view">;
+
   renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
+
+  setApprovedDex: TypedContractMethod<
+    [dex: AddressLike, approved: boolean],
+    [void],
+    "nonpayable"
+  >;
+
+  setApprovedDexBatch: TypedContractMethod<
+    [dexAddresses: AddressLike[], approved: boolean],
+    [void],
+    "nonpayable"
+  >;
 
   setAuctionContract: TypedContractMethod<
     [_auction: AddressLike],
@@ -205,16 +387,25 @@ export interface GreenShoeVault extends BaseContract {
     "nonpayable"
   >;
 
+  totalReceived: TypedContractMethod<[], [bigint], "view">;
+
+  totalUsedForBuyback: TypedContractMethod<[], [bigint], "view">;
+
   transferOwnership: TypedContractMethod<
     [newOwner: AddressLike],
     [void],
     "nonpayable"
   >;
 
+  unpause: TypedContractMethod<[], [void], "nonpayable">;
+
   getFunction<T extends ContractMethod = ContractMethod>(
     key: string | FunctionFragment
   ): T;
 
+  getFunction(
+    nameOrSignature: "approvedDexAddresses"
+  ): TypedContractMethod<[arg0: AddressLike], [boolean], "view">;
   getFunction(
     nameOrSignature: "auctionContract"
   ): TypedContractMethod<[], [string], "view">;
@@ -225,6 +416,13 @@ export interface GreenShoeVault extends BaseContract {
     nameOrSignature: "depositStabilizationFunds"
   ): TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "emergencyWithdraw"
+  ): TypedContractMethod<
+    [token: AddressLike, amount: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
+  getFunction(
     nameOrSignature: "executeBuyback"
   ): TypedContractMethod<
     [amount: BigNumberish, dexAddress: AddressLike],
@@ -232,18 +430,84 @@ export interface GreenShoeVault extends BaseContract {
     "nonpayable"
   >;
   getFunction(
+    nameOrSignature: "getBalance"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "getStats"
+  ): TypedContractMethod<
+    [],
+    [
+      [bigint, bigint, bigint] & {
+        balance: bigint;
+        received: bigint;
+        usedForBuyback: bigint;
+      }
+    ],
+    "view"
+  >;
+  getFunction(
     nameOrSignature: "owner"
   ): TypedContractMethod<[], [string], "view">;
+  getFunction(
+    nameOrSignature: "pause"
+  ): TypedContractMethod<[], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "paused"
+  ): TypedContractMethod<[], [boolean], "view">;
   getFunction(
     nameOrSignature: "renounceOwnership"
   ): TypedContractMethod<[], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "setApprovedDex"
+  ): TypedContractMethod<
+    [dex: AddressLike, approved: boolean],
+    [void],
+    "nonpayable"
+  >;
+  getFunction(
+    nameOrSignature: "setApprovedDexBatch"
+  ): TypedContractMethod<
+    [dexAddresses: AddressLike[], approved: boolean],
+    [void],
+    "nonpayable"
+  >;
+  getFunction(
     nameOrSignature: "setAuctionContract"
   ): TypedContractMethod<[_auction: AddressLike], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "totalReceived"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
+    nameOrSignature: "totalUsedForBuyback"
+  ): TypedContractMethod<[], [bigint], "view">;
+  getFunction(
     nameOrSignature: "transferOwnership"
   ): TypedContractMethod<[newOwner: AddressLike], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "unpause"
+  ): TypedContractMethod<[], [void], "nonpayable">;
 
+  getEvent(
+    key: "AuctionContractUpdated"
+  ): TypedContractEvent<
+    AuctionContractUpdatedEvent.InputTuple,
+    AuctionContractUpdatedEvent.OutputTuple,
+    AuctionContractUpdatedEvent.OutputObject
+  >;
+  getEvent(
+    key: "DexApprovalUpdated"
+  ): TypedContractEvent<
+    DexApprovalUpdatedEvent.InputTuple,
+    DexApprovalUpdatedEvent.OutputTuple,
+    DexApprovalUpdatedEvent.OutputObject
+  >;
+  getEvent(
+    key: "EmergencyWithdraw"
+  ): TypedContractEvent<
+    EmergencyWithdrawEvent.InputTuple,
+    EmergencyWithdrawEvent.OutputTuple,
+    EmergencyWithdrawEvent.OutputObject
+  >;
   getEvent(
     key: "FundsReceived"
   ): TypedContractEvent<
@@ -265,8 +529,55 @@ export interface GreenShoeVault extends BaseContract {
     OwnershipTransferredEvent.OutputTuple,
     OwnershipTransferredEvent.OutputObject
   >;
+  getEvent(
+    key: "Paused"
+  ): TypedContractEvent<
+    PausedEvent.InputTuple,
+    PausedEvent.OutputTuple,
+    PausedEvent.OutputObject
+  >;
+  getEvent(
+    key: "Unpaused"
+  ): TypedContractEvent<
+    UnpausedEvent.InputTuple,
+    UnpausedEvent.OutputTuple,
+    UnpausedEvent.OutputObject
+  >;
 
   filters: {
+    "AuctionContractUpdated(address,address)": TypedContractEvent<
+      AuctionContractUpdatedEvent.InputTuple,
+      AuctionContractUpdatedEvent.OutputTuple,
+      AuctionContractUpdatedEvent.OutputObject
+    >;
+    AuctionContractUpdated: TypedContractEvent<
+      AuctionContractUpdatedEvent.InputTuple,
+      AuctionContractUpdatedEvent.OutputTuple,
+      AuctionContractUpdatedEvent.OutputObject
+    >;
+
+    "DexApprovalUpdated(address,bool)": TypedContractEvent<
+      DexApprovalUpdatedEvent.InputTuple,
+      DexApprovalUpdatedEvent.OutputTuple,
+      DexApprovalUpdatedEvent.OutputObject
+    >;
+    DexApprovalUpdated: TypedContractEvent<
+      DexApprovalUpdatedEvent.InputTuple,
+      DexApprovalUpdatedEvent.OutputTuple,
+      DexApprovalUpdatedEvent.OutputObject
+    >;
+
+    "EmergencyWithdraw(address,uint256)": TypedContractEvent<
+      EmergencyWithdrawEvent.InputTuple,
+      EmergencyWithdrawEvent.OutputTuple,
+      EmergencyWithdrawEvent.OutputObject
+    >;
+    EmergencyWithdraw: TypedContractEvent<
+      EmergencyWithdrawEvent.InputTuple,
+      EmergencyWithdrawEvent.OutputTuple,
+      EmergencyWithdrawEvent.OutputObject
+    >;
+
     "FundsReceived(uint256)": TypedContractEvent<
       FundsReceivedEvent.InputTuple,
       FundsReceivedEvent.OutputTuple,
@@ -298,6 +609,28 @@ export interface GreenShoeVault extends BaseContract {
       OwnershipTransferredEvent.InputTuple,
       OwnershipTransferredEvent.OutputTuple,
       OwnershipTransferredEvent.OutputObject
+    >;
+
+    "Paused(address)": TypedContractEvent<
+      PausedEvent.InputTuple,
+      PausedEvent.OutputTuple,
+      PausedEvent.OutputObject
+    >;
+    Paused: TypedContractEvent<
+      PausedEvent.InputTuple,
+      PausedEvent.OutputTuple,
+      PausedEvent.OutputObject
+    >;
+
+    "Unpaused(address)": TypedContractEvent<
+      UnpausedEvent.InputTuple,
+      UnpausedEvent.OutputTuple,
+      UnpausedEvent.OutputObject
+    >;
+    Unpaused: TypedContractEvent<
+      UnpausedEvent.InputTuple,
+      UnpausedEvent.OutputTuple,
+      UnpausedEvent.OutputObject
     >;
   };
 }

@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "license": "MIT",
   "scripts": {
-    "test": "hardhat test"
+    "test": "hardhat test",
+    "clean": "find . -name '._*' -type f -delete && npx hardhat clean",
+    "compile": "find . -name '._*' -type f -delete && npx hardhat compile",
+    "deploy:local": "find . -name '._*' -type f -delete && npx hardhat run scripts/deploy_sepolia.ts --network localhost"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

@@ -1,14 +1,13 @@
 import { ethers } from "hardhat";
 
-// 确保这里的合约地址是您之前部署的那个
-// ⚠️ 必须是 Step 3 部署的那个新地址
-const AUCTION_ADDRESS = "0xc9AeBb8D366113383BB243bD9299b3392C30421c"; // ✅ 新 Auction
+// Anvil 本地部署的拍卖合约地址
+const AUCTION_ADDRESS = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0";
 
 async function main() {
   const [deployer] = await ethers.getSigners();
   
-  // ⚠️⚠️⚠️ 请把这里换成您网页上显示的那个钱包地址 ⚠️⚠️⚠️
-  const targetAddress = "0x3c3c15373ecf0f68c7a841eac56893ffe1952a94"; 
+  // Anvil 默认账户 #0 (部署者账户，也是测试用户)
+  const targetAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; 
   
   console.log(`🛡️ 正在将用户 ${targetAddress} 加入 KYC 白名单...`);
 
