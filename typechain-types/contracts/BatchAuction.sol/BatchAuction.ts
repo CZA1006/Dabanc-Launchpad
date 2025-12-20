@@ -29,18 +29,10 @@ export interface BatchAuctionInterface extends Interface {
       | "GREEN_SHOE_RATIO"
       | "ROUND_DURATION"
       | "auctionToken"
-      | "claimRefund"
-      | "claimTokens"
       | "currentRoundId"
-      | "emergencyWithdraw"
+      | "deposit"
       | "executeClearing"
-      | "executeClearingSimple"
-      | "getAvailableProceeds"
-      | "getDynamicSupplyConfig"
-      | "getRemainingTime"
-      | "getRoundParticipantCount"
       | "getSupplyStats"
-      | "getUserBidDetails"
       | "greenShoeVault"
       | "isRoundActive"
       | "isWhitelisted"
@@ -51,7 +43,6 @@ export interface BatchAuctionInterface extends Interface {
       | "pause"
       | "paused"
       | "paymentCurrency"
-      | "placeBid"
       | "priceTolerance"
       | "renounceOwnership"
       | "rounds"
@@ -69,28 +60,27 @@ export interface BatchAuctionInterface extends Interface {
       | "totalTokensIssued"
       | "transferOwnership"
       | "unpause"
-      | "userBidDetails"
-      | "userBids"
+      | "userBalances"
+      | "withdraw"
       | "withdrawProceeds"
   ): FunctionFragment;
 
   getEvent(
     nameOrSignatureOrTopic:
-      | "BidPlaced"
+      | "Deposit"
       | "EmergencyWithdraw"
       | "GreenShoeActivated"
       | "OwnershipTransferred"
       | "Paused"
       | "PriceRangeUpdated"
       | "ProceedsWithdrawn"
-      | "RefundClaimed"
       | "RoundCleared"
       | "RoundStarted"
       | "SupplyAdjusted"
       | "TargetPriceUpdated"
-      | "TokensClaimed"
       | "TotalSupplyUpdated"
       | "Unpaused"
+      | "Withdraw"
   ): EventFragment;
 
   encodeFunctionData(
@@ -106,52 +96,20 @@ export interface BatchAuctionInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(
-    functionFragment: "claimRefund",
-    values: [BigNumberish]
-  ): string;
-  encodeFunctionData(
-    functionFragment: "claimTokens",
-    values: [BigNumberish]
-  ): string;
-  encodeFunctionData(
     functionFragment: "currentRoundId",
     values?: undefined
   ): string;
   encodeFunctionData(
-    functionFragment: "emergencyWithdraw",
-    values: [AddressLike, BigNumberish]
+    functionFragment: "deposit",
+    values: [BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "executeClearing",
     values: [BigNumberish, AddressLike[], BigNumberish[], BigNumberish[]]
   ): string;
   encodeFunctionData(
-    functionFragment: "executeClearingSimple",
-    values: [BigNumberish]
-  ): string;
-  encodeFunctionData(
-    functionFragment: "getAvailableProceeds",
-    values?: undefined
-  ): string;
-  encodeFunctionData(
-    functionFragment: "getDynamicSupplyConfig",
-    values?: undefined
-  ): string;
-  encodeFunctionData(
-    functionFragment: "getRemainingTime",
-    values?: undefined
-  ): string;
-  encodeFunctionData(
-    functionFragment: "getRoundParticipantCount",
-    values: [BigNumberish]
-  ): string;
-  encodeFunctionData(
     functionFragment: "getSupplyStats",
     values?: undefined
-  ): string;
-  encodeFunctionData(
-    functionFragment: "getUserBidDetails",
-    values: [BigNumberish, AddressLike]
   ): string;
   encodeFunctionData(
     functionFragment: "greenShoeVault",
@@ -183,10 +141,6 @@ export interface BatchAuctionInterface extends Interface {
   encodeFunctionData(
     functionFragment: "paymentCurrency",
     values?: undefined
-  ): string;
-  encodeFunctionData(
-    functionFragment: "placeBid",
-    values: [BigNumberish, BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "priceTolerance",
@@ -254,12 +208,12 @@ export interface BatchAuctionInterface extends Interface {
   ): string;
   encodeFunctionData(functionFragment: "unpause", values?: undefined): string;
   encodeFunctionData(
-    functionFragment: "userBidDetails",
-    values: [BigNumberish, AddressLike]
+    functionFragment: "userBalances",
+    values: [AddressLike]
   ): string;
   encodeFunctionData(
-    functionFragment: "userBids",
-    values: [BigNumberish, AddressLike]
+    functionFragment: "withdraw",
+    values: [BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "withdrawProceeds",
@@ -279,51 +233,16 @@ export interface BatchAuctionInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "claimRefund",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
-    functionFragment: "claimTokens",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
     functionFragment: "currentRoundId",
     data: BytesLike
   ): Result;
-  decodeFunctionResult(
-    functionFragment: "emergencyWithdraw",
-    data: BytesLike
-  ): Result;
+  decodeFunctionResult(functionFragment: "deposit", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "executeClearing",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
-    functionFragment: "executeClearingSimple",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
-    functionFragment: "getAvailableProceeds",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
-    functionFragment: "getDynamicSupplyConfig",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
-    functionFragment: "getRemainingTime",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
-    functionFragment: "getRoundParticipantCount",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
     functionFragment: "getSupplyStats",
-    data: BytesLike
-  ): Result;
-  decodeFunctionResult(
-    functionFragment: "getUserBidDetails",
     data: BytesLike
   ): Result;
   decodeFunctionResult(
@@ -357,7 +276,6 @@ export interface BatchAuctionInterface extends Interface {
     functionFragment: "paymentCurrency",
     data: BytesLike
   ): Result;
-  decodeFunctionResult(functionFragment: "placeBid", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "priceTolerance",
     data: BytesLike
@@ -421,34 +339,22 @@ export interface BatchAuctionInterface extends Interface {
   ): Result;
   decodeFunctionResult(functionFragment: "unpause", data: BytesLike): Result;
   decodeFunctionResult(
-    functionFragment: "userBidDetails",
+    functionFragment: "userBalances",
     data: BytesLike
   ): Result;
-  decodeFunctionResult(functionFragment: "userBids", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "withdraw", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "withdrawProceeds",
     data: BytesLike
   ): Result;
 }
 
-export namespace BidPlacedEvent {
-  export type InputTuple = [
-    roundId: BigNumberish,
-    user: AddressLike,
-    amount: BigNumberish,
-    limitPrice: BigNumberish
-  ];
-  export type OutputTuple = [
-    roundId: bigint,
-    user: string,
-    amount: bigint,
-    limitPrice: bigint
-  ];
+export namespace DepositEvent {
+  export type InputTuple = [user: AddressLike, amount: BigNumberish];
+  export type OutputTuple = [user: string, amount: bigint];
   export interface OutputObject {
-    roundId: bigint;
     user: string;
     amount: bigint;
-    limitPrice: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -532,28 +438,6 @@ export namespace ProceedsWithdrawnEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
-export namespace RefundClaimedEvent {
-  export type InputTuple = [
-    roundId: BigNumberish,
-    user: AddressLike,
-    refundAmount: BigNumberish
-  ];
-  export type OutputTuple = [
-    roundId: bigint,
-    user: string,
-    refundAmount: bigint
-  ];
-  export interface OutputObject {
-    roundId: bigint;
-    user: string;
-    refundAmount: bigint;
-  }
-  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
-  export type Filter = TypedDeferredTopicFilter<Event>;
-  export type Log = TypedEventLog<Event>;
-  export type LogDescription = TypedLogDescription<Event>;
-}
-
 export namespace RoundClearedEvent {
   export type InputTuple = [
     roundId: BigNumberish,
@@ -626,28 +510,6 @@ export namespace TargetPriceUpdatedEvent {
   export type LogDescription = TypedLogDescription<Event>;
 }
 
-export namespace TokensClaimedEvent {
-  export type InputTuple = [
-    roundId: BigNumberish,
-    user: AddressLike,
-    tokenAmount: BigNumberish
-  ];
-  export type OutputTuple = [
-    roundId: bigint,
-    user: string,
-    tokenAmount: bigint
-  ];
-  export interface OutputObject {
-    roundId: bigint;
-    user: string;
-    tokenAmount: bigint;
-  }
-  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
-  export type Filter = TypedDeferredTopicFilter<Event>;
-  export type Log = TypedEventLog<Event>;
-  export type LogDescription = TypedLogDescription<Event>;
-}
-
 export namespace TotalSupplyUpdatedEvent {
   export type InputTuple = [newTotalSupply: BigNumberish];
   export type OutputTuple = [newTotalSupply: bigint];
@@ -665,6 +527,19 @@ export namespace UnpausedEvent {
   export type OutputTuple = [account: string];
   export interface OutputObject {
     account: string;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace WithdrawEvent {
+  export type InputTuple = [user: AddressLike, amount: BigNumberish];
+  export type OutputTuple = [user: string, amount: bigint];
+  export interface OutputObject {
+    user: string;
+    amount: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -721,63 +596,19 @@ export interface BatchAuction extends BaseContract {
 
   auctionToken: TypedContractMethod<[], [string], "view">;
 
-  claimRefund: TypedContractMethod<
-    [roundId: BigNumberish],
-    [void],
-    "nonpayable"
-  >;
-
-  claimTokens: TypedContractMethod<
-    [roundId: BigNumberish],
-    [void],
-    "nonpayable"
-  >;
-
   currentRoundId: TypedContractMethod<[], [bigint], "view">;
 
-  emergencyWithdraw: TypedContractMethod<
-    [token: AddressLike, amount: BigNumberish],
-    [void],
-    "nonpayable"
-  >;
+  deposit: TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
 
   executeClearing: TypedContractMethod<
     [
       _price: BigNumberish,
-      users: AddressLike[],
+      winners: AddressLike[],
       tokenAmounts: BigNumberish[],
-      refundAmounts: BigNumberish[]
+      costAmounts: BigNumberish[]
     ],
     [void],
     "nonpayable"
-  >;
-
-  executeClearingSimple: TypedContractMethod<
-    [_price: BigNumberish],
-    [void],
-    "nonpayable"
-  >;
-
-  getAvailableProceeds: TypedContractMethod<[], [bigint], "view">;
-
-  getDynamicSupplyConfig: TypedContractMethod<
-    [],
-    [
-      [bigint, bigint, bigint] & {
-        target: bigint;
-        step: bigint;
-        tolerance: bigint;
-      }
-    ],
-    "view"
-  >;
-
-  getRemainingTime: TypedContractMethod<[], [bigint], "view">;
-
-  getRoundParticipantCount: TypedContractMethod<
-    [roundId: BigNumberish],
-    [bigint],
-    "view"
   >;
 
   getSupplyStats: TypedContractMethod<
@@ -787,22 +618,8 @@ export interface BatchAuction extends BaseContract {
         total: bigint;
         issued: bigint;
         remaining: bigint;
-        currentRound: bigint;
+        current: bigint;
         progress: bigint;
-      }
-    ],
-    "view"
-  >;
-
-  getUserBidDetails: TypedContractMethod<
-    [roundId: BigNumberish, user: AddressLike],
-    [
-      [bigint, bigint, bigint, boolean, boolean] & {
-        totalAmount: bigint;
-        tokensAllocated: bigint;
-        refundAmount: bigint;
-        hasClaimed: boolean;
-        hasRefunded: boolean;
       }
     ],
     "view"
@@ -828,12 +645,6 @@ export interface BatchAuction extends BaseContract {
 
   paymentCurrency: TypedContractMethod<[], [string], "view">;
 
-  placeBid: TypedContractMethod<
-    [amount: BigNumberish, _limitPrice: BigNumberish],
-    [void],
-    "nonpayable"
-  >;
-
   priceTolerance: TypedContractMethod<[], [bigint], "view">;
 
   renounceOwnership: TypedContractMethod<[], [void], "nonpayable">;
@@ -841,8 +652,7 @@ export interface BatchAuction extends BaseContract {
   rounds: TypedContractMethod<
     [arg0: BigNumberish],
     [
-      [bigint, bigint, bigint, boolean] & {
-        totalBidAmount: bigint;
+      [bigint, bigint, boolean] & {
         clearingPrice: bigint;
         totalTokensSold: bigint;
         isCleared: boolean;
@@ -852,11 +662,7 @@ export interface BatchAuction extends BaseContract {
   >;
 
   setDynamicSupplyParams: TypedContractMethod<
-    [
-      _targetPrice: BigNumberish,
-      _adjustmentStep: BigNumberish,
-      _priceTolerance: BigNumberish
-    ],
+    [_target: BigNumberish, _step: BigNumberish, _tolerance: BigNumberish],
     [void],
     "nonpayable"
   >;
@@ -911,25 +717,9 @@ export interface BatchAuction extends BaseContract {
 
   unpause: TypedContractMethod<[], [void], "nonpayable">;
 
-  userBidDetails: TypedContractMethod<
-    [arg0: BigNumberish, arg1: AddressLike],
-    [
-      [bigint, bigint, bigint, boolean, boolean] & {
-        totalAmount: bigint;
-        tokensAllocated: bigint;
-        refundAmount: bigint;
-        hasClaimed: boolean;
-        hasRefunded: boolean;
-      }
-    ],
-    "view"
-  >;
+  userBalances: TypedContractMethod<[arg0: AddressLike], [bigint], "view">;
 
-  userBids: TypedContractMethod<
-    [arg0: BigNumberish, arg1: AddressLike],
-    [bigint],
-    "view"
-  >;
+  withdraw: TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
 
   withdrawProceeds: TypedContractMethod<[], [void], "nonpayable">;
 
@@ -947,58 +737,23 @@ export interface BatchAuction extends BaseContract {
     nameOrSignature: "auctionToken"
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
-    nameOrSignature: "claimRefund"
-  ): TypedContractMethod<[roundId: BigNumberish], [void], "nonpayable">;
-  getFunction(
-    nameOrSignature: "claimTokens"
-  ): TypedContractMethod<[roundId: BigNumberish], [void], "nonpayable">;
-  getFunction(
     nameOrSignature: "currentRoundId"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
-    nameOrSignature: "emergencyWithdraw"
-  ): TypedContractMethod<
-    [token: AddressLike, amount: BigNumberish],
-    [void],
-    "nonpayable"
-  >;
+    nameOrSignature: "deposit"
+  ): TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "executeClearing"
   ): TypedContractMethod<
     [
       _price: BigNumberish,
-      users: AddressLike[],
+      winners: AddressLike[],
       tokenAmounts: BigNumberish[],
-      refundAmounts: BigNumberish[]
+      costAmounts: BigNumberish[]
     ],
     [void],
     "nonpayable"
   >;
-  getFunction(
-    nameOrSignature: "executeClearingSimple"
-  ): TypedContractMethod<[_price: BigNumberish], [void], "nonpayable">;
-  getFunction(
-    nameOrSignature: "getAvailableProceeds"
-  ): TypedContractMethod<[], [bigint], "view">;
-  getFunction(
-    nameOrSignature: "getDynamicSupplyConfig"
-  ): TypedContractMethod<
-    [],
-    [
-      [bigint, bigint, bigint] & {
-        target: bigint;
-        step: bigint;
-        tolerance: bigint;
-      }
-    ],
-    "view"
-  >;
-  getFunction(
-    nameOrSignature: "getRemainingTime"
-  ): TypedContractMethod<[], [bigint], "view">;
-  getFunction(
-    nameOrSignature: "getRoundParticipantCount"
-  ): TypedContractMethod<[roundId: BigNumberish], [bigint], "view">;
   getFunction(
     nameOrSignature: "getSupplyStats"
   ): TypedContractMethod<
@@ -1008,23 +763,8 @@ export interface BatchAuction extends BaseContract {
         total: bigint;
         issued: bigint;
         remaining: bigint;
-        currentRound: bigint;
+        current: bigint;
         progress: bigint;
-      }
-    ],
-    "view"
-  >;
-  getFunction(
-    nameOrSignature: "getUserBidDetails"
-  ): TypedContractMethod<
-    [roundId: BigNumberish, user: AddressLike],
-    [
-      [bigint, bigint, bigint, boolean, boolean] & {
-        totalAmount: bigint;
-        tokensAllocated: bigint;
-        refundAmount: bigint;
-        hasClaimed: boolean;
-        hasRefunded: boolean;
       }
     ],
     "view"
@@ -1060,13 +800,6 @@ export interface BatchAuction extends BaseContract {
     nameOrSignature: "paymentCurrency"
   ): TypedContractMethod<[], [string], "view">;
   getFunction(
-    nameOrSignature: "placeBid"
-  ): TypedContractMethod<
-    [amount: BigNumberish, _limitPrice: BigNumberish],
-    [void],
-    "nonpayable"
-  >;
-  getFunction(
     nameOrSignature: "priceTolerance"
   ): TypedContractMethod<[], [bigint], "view">;
   getFunction(
@@ -1077,8 +810,7 @@ export interface BatchAuction extends BaseContract {
   ): TypedContractMethod<
     [arg0: BigNumberish],
     [
-      [bigint, bigint, bigint, boolean] & {
-        totalBidAmount: bigint;
+      [bigint, bigint, boolean] & {
         clearingPrice: bigint;
         totalTokensSold: bigint;
         isCleared: boolean;
@@ -1089,11 +821,7 @@ export interface BatchAuction extends BaseContract {
   getFunction(
     nameOrSignature: "setDynamicSupplyParams"
   ): TypedContractMethod<
-    [
-      _targetPrice: BigNumberish,
-      _adjustmentStep: BigNumberish,
-      _priceTolerance: BigNumberish
-    ],
+    [_target: BigNumberish, _step: BigNumberish, _tolerance: BigNumberish],
     [void],
     "nonpayable"
   >;
@@ -1145,37 +873,21 @@ export interface BatchAuction extends BaseContract {
     nameOrSignature: "unpause"
   ): TypedContractMethod<[], [void], "nonpayable">;
   getFunction(
-    nameOrSignature: "userBidDetails"
-  ): TypedContractMethod<
-    [arg0: BigNumberish, arg1: AddressLike],
-    [
-      [bigint, bigint, bigint, boolean, boolean] & {
-        totalAmount: bigint;
-        tokensAllocated: bigint;
-        refundAmount: bigint;
-        hasClaimed: boolean;
-        hasRefunded: boolean;
-      }
-    ],
-    "view"
-  >;
+    nameOrSignature: "userBalances"
+  ): TypedContractMethod<[arg0: AddressLike], [bigint], "view">;
   getFunction(
-    nameOrSignature: "userBids"
-  ): TypedContractMethod<
-    [arg0: BigNumberish, arg1: AddressLike],
-    [bigint],
-    "view"
-  >;
+    nameOrSignature: "withdraw"
+  ): TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "withdrawProceeds"
   ): TypedContractMethod<[], [void], "nonpayable">;
 
   getEvent(
-    key: "BidPlaced"
+    key: "Deposit"
   ): TypedContractEvent<
-    BidPlacedEvent.InputTuple,
-    BidPlacedEvent.OutputTuple,
-    BidPlacedEvent.OutputObject
+    DepositEvent.InputTuple,
+    DepositEvent.OutputTuple,
+    DepositEvent.OutputObject
   >;
   getEvent(
     key: "EmergencyWithdraw"
@@ -1220,13 +932,6 @@ export interface BatchAuction extends BaseContract {
     ProceedsWithdrawnEvent.OutputObject
   >;
   getEvent(
-    key: "RefundClaimed"
-  ): TypedContractEvent<
-    RefundClaimedEvent.InputTuple,
-    RefundClaimedEvent.OutputTuple,
-    RefundClaimedEvent.OutputObject
-  >;
-  getEvent(
     key: "RoundCleared"
   ): TypedContractEvent<
     RoundClearedEvent.InputTuple,
@@ -1255,13 +960,6 @@ export interface BatchAuction extends BaseContract {
     TargetPriceUpdatedEvent.OutputObject
   >;
   getEvent(
-    key: "TokensClaimed"
-  ): TypedContractEvent<
-    TokensClaimedEvent.InputTuple,
-    TokensClaimedEvent.OutputTuple,
-    TokensClaimedEvent.OutputObject
-  >;
-  getEvent(
     key: "TotalSupplyUpdated"
   ): TypedContractEvent<
     TotalSupplyUpdatedEvent.InputTuple,
@@ -1275,17 +973,24 @@ export interface BatchAuction extends BaseContract {
     UnpausedEvent.OutputTuple,
     UnpausedEvent.OutputObject
   >;
+  getEvent(
+    key: "Withdraw"
+  ): TypedContractEvent<
+    WithdrawEvent.InputTuple,
+    WithdrawEvent.OutputTuple,
+    WithdrawEvent.OutputObject
+  >;
 
   filters: {
-    "BidPlaced(uint256,address,uint256,uint256)": TypedContractEvent<
-      BidPlacedEvent.InputTuple,
-      BidPlacedEvent.OutputTuple,
-      BidPlacedEvent.OutputObject
+    "Deposit(address,uint256)": TypedContractEvent<
+      DepositEvent.InputTuple,
+      DepositEvent.OutputTuple,
+      DepositEvent.OutputObject
     >;
-    BidPlaced: TypedContractEvent<
-      BidPlacedEvent.InputTuple,
-      BidPlacedEvent.OutputTuple,
-      BidPlacedEvent.OutputObject
+    Deposit: TypedContractEvent<
+      DepositEvent.InputTuple,
+      DepositEvent.OutputTuple,
+      DepositEvent.OutputObject
     >;
 
     "EmergencyWithdraw(address,uint256)": TypedContractEvent<
@@ -1354,17 +1059,6 @@ export interface BatchAuction extends BaseContract {
       ProceedsWithdrawnEvent.OutputObject
     >;
 
-    "RefundClaimed(uint256,address,uint256)": TypedContractEvent<
-      RefundClaimedEvent.InputTuple,
-      RefundClaimedEvent.OutputTuple,
-      RefundClaimedEvent.OutputObject
-    >;
-    RefundClaimed: TypedContractEvent<
-      RefundClaimedEvent.InputTuple,
-      RefundClaimedEvent.OutputTuple,
-      RefundClaimedEvent.OutputObject
-    >;
-
     "RoundCleared(uint256,uint256,uint256)": TypedContractEvent<
       RoundClearedEvent.InputTuple,
       RoundClearedEvent.OutputTuple,
@@ -1409,17 +1103,6 @@ export interface BatchAuction extends BaseContract {
       TargetPriceUpdatedEvent.OutputObject
     >;
 
-    "TokensClaimed(uint256,address,uint256)": TypedContractEvent<
-      TokensClaimedEvent.InputTuple,
-      TokensClaimedEvent.OutputTuple,
-      TokensClaimedEvent.OutputObject
-    >;
-    TokensClaimed: TypedContractEvent<
-      TokensClaimedEvent.InputTuple,
-      TokensClaimedEvent.OutputTuple,
-      TokensClaimedEvent.OutputObject
-    >;
-
     "TotalSupplyUpdated(uint256)": TypedContractEvent<
       TotalSupplyUpdatedEvent.InputTuple,
       TotalSupplyUpdatedEvent.OutputTuple,
@@ -1440,6 +1123,17 @@ export interface BatchAuction extends BaseContract {
       UnpausedEvent.InputTuple,
       UnpausedEvent.OutputTuple,
       UnpausedEvent.OutputObject
+    >;
+
+    "Withdraw(address,uint256)": TypedContractEvent<
+      WithdrawEvent.InputTuple,
+      WithdrawEvent.OutputTuple,
+      WithdrawEvent.OutputObject
+    >;
+    Withdraw: TypedContractEvent<
+      WithdrawEvent.InputTuple,
+      WithdrawEvent.OutputTuple,
+      WithdrawEvent.OutputObject
     >;
   };
 }

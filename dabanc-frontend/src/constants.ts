@@ -3,8 +3,11 @@
 // ============================================
 
 // === 合约地址 (Sepolia Testnet) ===
-export const AUCTION_ADDRESS = "0x62e2923995625bD0659024Eb5caC4a73aAd8917A" as const;
-export const USDC_ADDRESS = "0x7eDA0a75366E2D361bB0de07FACC7a44E8b3A268" as const;
+export const AUCTION_ADDRESS = "0x58869Fc469438025C05f62fe98032b651924adAB" as const;
+export const USDC_ADDRESS = "0x3F61E6fD9638Ed9f524df377dF4d20279d5dAAee" as const;
+
+// 🌟 CEX 服务器地址 (指向本地运行的 server.ts)
+export const API_URL = "http://localhost:3001";
 
 // === 项目配置 ===
 export const PROJECT_CONFIG = {
@@ -37,7 +40,29 @@ export enum AuctionPhase {
 
 // === 拍卖合约 ABI ===
 export const AUCTION_ABI = [
-  // === 写入函数 ===
+  // --- 资金管理 ---
+  {
+    inputs: [{"internalType": "uint256", "name": "amount", "type": "uint256"}],
+    name: "deposit",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function"
+  },
+  {
+    inputs: [{"internalType": "uint256", "name": "amount", "type": "uint256"}],
+    name: "withdraw",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function"
+  },
+  {
+    inputs: [{"internalType": "address", "name": "", "type": "address"}],
+    name: "userBalances",
+    outputs: [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    stateMutability: "view",
+    type: "function"
+  },
+  // --- 写入函数 ---
   {
     inputs: [
       { name: "amount", type: "uint256" },
@@ -70,7 +95,7 @@ export const AUCTION_ABI = [
     type: "function"
   },
   
-  // === 读取函数 ===
+  // --- 读取函数 ---
   {
     inputs: [],
     name: "currentRoundId",
@@ -103,7 +128,7 @@ export const AUCTION_ABI = [
     inputs: [{ name: "roundId", type: "uint256" }],
     name: "rounds",
     outputs: [
-      { name: "totalBidAmount", type: "uint256" },
+      { name: "totalBidAmount", type: "uint256" }, // 注意：这里的字段名可能需要根据你的合约实际返回值调整，如果合约返回的是tuple，ethers会自动解析
       { name: "clearingPrice", type: "uint256" },
       { name: "totalTokensSold", type: "uint256" },
       { name: "isCleared", type: "bool" }
@@ -152,7 +177,7 @@ export const AUCTION_ABI = [
     type: "function"
   },
   
-  // === 事件 ===
+  // --- 事件 ---
   {
     anonymous: false,
     inputs: [
@@ -204,7 +229,7 @@ export const AUCTION_ABI = [
     type: "event"
   },
   
-  // === 动态供应量查询函数 ===
+  // --- 动态供应量查询函数 ---
   {
     inputs: [],
     name: "getSupplyStats",
@@ -230,39 +255,7 @@ export const AUCTION_ABI = [
     type: "function"
   },
   
-  // === 用户资产查询函数 ===
-  {
-    inputs: [
-      { name: "roundId", type: "uint256" },
-      { name: "user", type: "address" }
-    ],
-    name: "getUserBidDetails",
-    outputs: [
-      { name: "totalAmount", type: "uint256" },
-      { name: "tokensAllocated", type: "uint256" },
-      { name: "refundAmount", type: "uint256" },
-      { name: "hasClaimed", type: "bool" },
-      { name: "hasRefunded", type: "bool" }
-    ],
-    stateMutability: "view",
-    type: "function"
-  },
-  
-  // === 轮次信息查询 ===
-  {
-    inputs: [{ name: "roundId", type: "uint256" }],
-    name: "rounds",
-    outputs: [
-      { name: "clearingPrice", type: "uint256" },
-      { name: "totalTokensAllocated", type: "uint256" },
-      { name: "totalPaid", type: "uint256" },
-      { name: "isCleared", type: "bool" }
-    ],
-    stateMutability: "view",
-    type: "function"
-  },
-  
-  // === 管理员函数 (仅限 owner) ===
+  // --- 管理员函数 (仅限 owner) ---
   {
     inputs: [],
     name: "withdrawProceeds",
@@ -344,6 +337,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   "nonce too low": "交易 Nonce 冲突，请刷新页面重试",
   "replacement fee too low": "Gas 价格过低，交易可能卡住",
   "network changed": "检测到网络切换，请确认您在 Sepolia 测试网",
+  "InsufficientBalance": "平台账户余额不足，请先充值", // 补充 CEX 模式错误
 };
 
 // === 获取友好错误信息 ===
