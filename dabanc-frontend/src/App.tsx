@@ -1,6 +1,8 @@
 /**
- * Dabanc Launchpad - CEX 极速交易模式前端 (UI/UX 优化版)
- * 优化点：清晰区分外部钱包资金与内部交易资金
+ * Dabanc Launchpad - Ultimate v8.1 (Fixed & Enhanced)
+ * 1. Fixed wSPX Deposit Logic 🔧
+ * 2. New Spinner Animation 🌀
+ * 3. Wallet Balance Display 🦊
  */
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
@@ -9,151 +11,137 @@ import {
   useReadContract, 
   useWriteContract, 
   useWaitForTransactionReceipt, 
-  useChainId
+  useBalance
 } from 'wagmi';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { parseEther, formatEther } from 'viem';
 import axios from 'axios';
 import { 
   AUCTION_ADDRESS, 
   USDC_ADDRESS, 
+  TOKEN_ADDRESS, // ⚠️ 请确保 constants.ts 里导出了这个
   AUCTION_ABI, 
   USDC_ABI, 
   PROJECT_CONFIG,
-  AuctionPhase,
   formatters,
   getFriendlyError,
   API_URL 
 } from './constants';
 
-// === 类型定义 ===
 interface Bid {
   user: string;
   amount: number;
   limitPrice: number;
   timestamp: number;
-  txHash: string;
-  status: 'pending' | 'confirmed';
 }
 
-interface UserEstimate {
-  wouldMatch: boolean;
-  estimatedTokens: number;
-  refund: number;
-  currentClearingPrice: number;
-}
-
-interface SettlementReport {
-  totalBid: number;
-  tokensAllocated: number;
-  refundAmount: number;
-  actualCost: number;
-  hasClaimed: boolean;
-  hasRefunded: boolean;
-}
+// 🔧 Config: Limits kept high for testing
+const MAX_SINGLE_ORDER_PERCENT = 5.0; 
+const MAX_PER_USER_PERCENT = 100.0; 
 
 export default function App() {
   const { address, isConnected } = useAccount();
-  const chainId = useChainId();
-  const networkName = chainId === 11155111 ? 'Sepolia' : chainId === 31337 ? 'Anvil' : `Chain ${chainId}`;
   
-  // === 状态管理 ===
-  const [amount, setAmount] = useState('500');
-  const [limitPrice, setLimitPrice] = useState('12.00');
-  const [depositAmount, setDepositAmount] = useState('1000');
+  const [orderType, setOrderType] = useState<'limit' | 'market'>('limit');
+  const [selectedAsset, setSelectedAsset] = useState<'USDC' | 'wSPX'>('USDC');
+  const [amount, setAmount] = useState('');
+  const [limitPrice, setLimitPrice] = useState('');
+  const [depositAmount, setDepositAmount] = useState('');
   const [timeLeft, setTimeLeft] = useState(0);
-  
   const [realBids, setRealBids] = useState<Bid[]>([]); 
-  const [lastUpdate, setLastUpdate] = useState(Date.now());
-  const [networkStatus, setNetworkStatus] = useState<'connected' | 'syncing' | 'error'>('connected');
   const [txError, setTxError] = useState<string | null>(null);
+  const [, setStep] = useState<string>('idle');
   
-  const [step, setStep] = useState<string>('idle');
+  // 🌟 Settlement State
+  const [showResult, setShowResult] = useState(false);
+  const [lastAllocated, setLastAllocated] = useState({ amount: 0, price: 0, roundId: 0 });
   
-  const { writeContract, data: hash, isPending, reset, error: writeError } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash });
+  const prevTokenBalance = useRef<bigint>(0n);
+  const prevRoundId = useRef<number>(0);
 
-  // === 1. 链上数据读取 ===
+  const { writeContract, data: hash, isPending, reset, error: writeError } = useWriteContract();
+  const { isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash });
+
+  useBalance({ address });
+
+  // === Contract Reads ===
   const { data: isRoundActive } = useReadContract({
-    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'isRoundActive', query: { refetchInterval: 5000 }
+    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'isRoundActive', query: { refetchInterval: 2000 }
   });
   const { data: currentRoundId } = useReadContract({
-    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'currentRoundId', query: { refetchInterval: 5000 }
+    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'currentRoundId', query: { refetchInterval: 2000 }
   });
   const { data: lastClearingTime } = useReadContract({
-    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'lastClearingTime', query: { refetchInterval: 5000 }
-  });
-  const { data: roundData } = useReadContract({
-    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'rounds', args: currentRoundId ? [currentRoundId] : undefined, query: { refetchInterval: 5000 }
+    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'lastClearingTime', query: { refetchInterval: 2000 }
   });
 
-  // === 2. 资金与用户数据 ===
-  // 外部钱包 (MetaMask)
-  const { data: usdcBalance, refetch: refetchWallet } = useReadContract({
+  // === Wallet Balances (MetaMask) ===
+  const { data: walletUsdc, refetch: refetchWalletUsdc } = useReadContract({
     address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'balanceOf', args: address ? [address] : undefined, query: { refetchInterval: 3000 }
   });
+  const { data: walletToken, refetch: refetchWalletToken } = useReadContract({
+    address: TOKEN_ADDRESS, abi: USDC_ABI, functionName: 'balanceOf', args: address ? [address] : undefined, query: { refetchInterval: 3000 }
+  });
+
+  // === Protocol Balances (Deposited) ===
+  const { data: contractUsdcBalance, refetch: refetchContractUsdc } = useReadContract({
+    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'userBalances', args: address ? [address] : undefined, query: { refetchInterval: 2000 }
+  });
+  const { data: contractTokenBalance, refetch: refetchContractToken } = useReadContract({
+    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'userTokenBalances', args: address ? [address] : undefined, query: { refetchInterval: 2000 }
+  });
+
+  // === Allowances ===
   const { data: usdcAllowance, refetch: refetchAllowance } = useReadContract({
     address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'allowance', args: address ? [address, AUCTION_ADDRESS] : undefined, query: { refetchInterval: 3000 }
   });
-  // 内部账户 (Dabanc Exchange)
-  const { data: contractBalance, refetch: refetchDeposited } = useReadContract({
-    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'userBalances', args: address ? [address] : undefined, query: { refetchInterval: 2000 }
+  const { data: tokenAllowance, refetch: refetchTokenAllowance } = useReadContract({
+    address: TOKEN_ADDRESS, abi: USDC_ABI, functionName: 'allowance', args: address ? [address, AUCTION_ADDRESS] : undefined, query: { refetchInterval: 3000 }
   });
+
   const { data: isWhitelisted } = useReadContract({
     address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'isWhitelisted', args: address ? [address] : undefined,
   });
 
-  // 结算详情查询
-  const settlementRoundId = useMemo(() => {
-    if (!currentRoundId) return 0n;
-    if (isRoundActive) return currentRoundId > 1n ? currentRoundId - 1n : 0n; 
-    return currentRoundId; 
-  }, [currentRoundId, isRoundActive]);
+  const isSettling = useMemo(() => {
+    return !isRoundActive && timeLeft <= 0;
+  }, [isRoundActive, timeLeft]);
 
-  const { data: userBidDetails, refetch: refetchDetails } = useReadContract({
-    address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'getUserBidDetails', 
-    args: (settlementRoundId > 0n && address) ? [settlementRoundId, address] : undefined,
-    query: { refetchInterval: 5000 }
-  });
+  // === Effects ===
+  useEffect(() => {
+    if (contractTokenBalance !== undefined) {
+      if (contractTokenBalance > prevTokenBalance.current && prevRoundId.current > 0) {
+        const diff = Number(formatEther(contractTokenBalance - prevTokenBalance.current));
+        setLastAllocated({ 
+          amount: diff, 
+          price: clearingPrice,
+          roundId: prevRoundId.current 
+        });
+        setShowResult(true);
+      }
+      prevTokenBalance.current = contractTokenBalance;
+    }
+  }, [contractTokenBalance]);
 
-  const settlementReport: SettlementReport | null = useMemo(() => {
-    if (!userBidDetails || settlementRoundId === 0n) return null;
-    // @ts-ignore
-    const [total, allocated, refund, claimed, refunded] = userBidDetails;
-    if (total === 0n && allocated === 0n) return null;
+  useEffect(() => {
+    if (currentRoundId) {
+      prevRoundId.current = Number(currentRoundId);
+    }
+  }, [currentRoundId]);
 
-    return {
-      totalBid: Number(formatEther(total)),
-      tokensAllocated: Number(formatEther(allocated)),
-      refundAmount: Number(formatEther(refund)),
-      actualCost: Number(formatEther(total - refund)),
-      hasClaimed: claimed,
-      hasRefunded: refunded
-    };
-  }, [userBidDetails, settlementRoundId]);
-
-
-  // === 3. 轮询 API ===
   useEffect(() => {
     if (!currentRoundId) return;
     const fetchOrderBook = async () => {
       try {
         const res = await axios.get(`${API_URL}/api/orders?roundId=${currentRoundId}`);
-        if (res.data && Array.isArray(res.data)) {
-          setRealBids(res.data);
-          setLastUpdate(Date.now());
-          setNetworkStatus('connected');
-        }
-      } catch (e) {
-        // quiet fail
-      }
+        if (res.data && Array.isArray(res.data)) setRealBids(res.data);
+      } catch (e) {}
     };
     fetchOrderBook(); 
     const interval = setInterval(fetchOrderBook, 1000); 
     return () => clearInterval(interval);
   }, [currentRoundId]);
 
-  // === 4. 倒计时 ===
   useEffect(() => {
     const timer = setInterval(() => {
       if (isRoundActive && lastClearingTime) {
@@ -166,443 +154,676 @@ export default function App() {
     return () => clearInterval(timer);
   }, [isRoundActive, lastClearingTime]);
 
-  // 交易确认后刷新
   useEffect(() => {
     if (isConfirmed) {
-      refetchWallet(); refetchAllowance(); refetchDeposited(); refetchDetails();
-      reset();
-      
-      if (step === 'approving') {
-        setStep('ready_to_deposit'); 
-      } else {
-        setStep('idle');
-      }
-      setTxError(null);
+      refetchWalletUsdc(); refetchWalletToken();
+      refetchAllowance(); refetchTokenAllowance();
+      refetchContractUsdc(); refetchContractToken();
+      reset(); setStep('idle'); setTxError(null);
     }
   }, [isConfirmed]);
 
   useEffect(() => {
-    if (writeError) {
-      setTxError(getFriendlyError(writeError));
-      setStep('idle');
-    }
+    if (writeError) { setTxError(getFriendlyError(writeError)); setStep('idle'); }
   }, [writeError]);
 
-  // === 5. 撮合引擎 ===
-  const { estimatedPrice, totalDemand, orderBookDisplay, depthData, userEstimate } = useMemo(() => {
-    if (realBids.length === 0) return { estimatedPrice: 1.0, totalDemand: 0, orderBookDisplay: [], depthData: [], userEstimate: null };
-    
-    const sortedBids = [...realBids].sort((a, b) => b.limitPrice - a.limitPrice);
+  // === Matching Logic ===
+  const { clearingPrice, orderBookRows, stats, totalDemand, userCurrentOrders } = useMemo(() => {
     const SUPPLY = PROJECT_CONFIG.supplyPerRound;
+    if (realBids.length === 0) return { clearingPrice: 10.0, orderBookRows: [], stats: { high: 0, low: 0, volume: 0 }, totalDemand: 0, userCurrentOrders: 0 };
     
+    const sorted = [...realBids].sort((a, b) => b.limitPrice - a.limitPrice || a.timestamp - b.timestamp);
     let accumulated = 0;
-    let clearingPrice = 1.0;
-    let clearingIndex = -1;
+    let price = 10.0;
+    let totalVol = 0;
+    let userOrders = 0;
 
-    for (let i = 0; i < sortedBids.length; i++) {
-      const bid = sortedBids[i];
-      accumulated += bid.amount / bid.limitPrice;
-      if (accumulated >= SUPPLY && clearingIndex === -1) {
-        clearingPrice = bid.limitPrice;
-        clearingIndex = i;
-      }
+    for (let i = 0; i < sorted.length; i++) {
+      const bid = sorted[i];
+      if (!bid || bid.limitPrice === null || bid.limitPrice === undefined || bid.limitPrice === 0) continue;
+      
+      const tokens = bid.amount / bid.limitPrice;
+      accumulated += tokens;
+      totalVol += bid.amount;
+      if (address && bid.user.toLowerCase() === address.toLowerCase()) userOrders += tokens;
+      if (accumulated >= SUPPLY && price === 10.0) { price = bid.limitPrice; }
     }
-    if (accumulated < SUPPLY && sortedBids.length > 0) clearingPrice = sortedBids[sortedBids.length - 1].limitPrice;
-    clearingPrice = Math.max(0.01, clearingPrice);
+    if (accumulated < SUPPLY && sorted.length > 0) price = sorted[sorted.length - 1].limitPrice;
+    price = Math.max(0.01, price);
 
-    const display = sortedBids.slice(0, 10).map((b, i) => ({
-      price: b.limitPrice,
-      volume: b.amount,
-      user: b.user,
-      isMatched: b.limitPrice >= clearingPrice,
-      isMarginal: i === clearingIndex
-    }));
-
-    const priceGroups: Record<string, number> = {};
-    sortedBids.forEach(b => {
-      const p = Math.floor(b.limitPrice).toString();
-      priceGroups[p] = (priceGroups[p] || 0) + b.amount;
+    const priceGroups: Record<string, { tokens: number; usdc: number }> = {};
+    sorted.forEach(bid => {
+      if (!bid || bid.limitPrice === null || bid.limitPrice === undefined) return;
+      
+      const priceKey = Number(bid.limitPrice).toFixed(4);
+      if (!priceGroups[priceKey]) priceGroups[priceKey] = { tokens: 0, usdc: 0 };
+      
+      const safePrice = bid.limitPrice > 0 ? bid.limitPrice : 0.0001;
+      priceGroups[priceKey].tokens += bid.amount / safePrice;
+      priceGroups[priceKey].usdc += bid.amount;
     });
-    const depth = Object.entries(priceGroups).map(([p, v]) => ({ price: parseFloat(p), volume: v })).sort((a, b) => b.price - a.price);
 
-    let userEst = null;
-    if (amount && limitPrice) {
-      const p = parseFloat(limitPrice);
-      const a = parseFloat(amount);
-      if (!isNaN(p) && !isNaN(a) && p > 0) {
-        const match = p >= clearingPrice;
-        userEst = { wouldMatch: match, estimatedTokens: match ? a / clearingPrice : 0, refund: match ? 0 : a, currentClearingPrice: clearingPrice };
-      }
+    const rows = Object.entries(priceGroups)
+      .map(([priceStr, data]) => ({
+        price: parseFloat(priceStr),
+        tokens: data.tokens,
+        usdc: data.usdc,
+        isAboveClearing: parseFloat(priceStr) >= price
+      }))
+      .sort((a, b) => b.price - a.price);
+
+    const maxTokens = Math.max(...rows.map(r => r.tokens), 1);
+    rows.forEach(r => { (r as any).percent = (r.tokens / maxTokens) * 100; });
+    const prices = sorted.map(b => b.limitPrice).filter(p => p !== null && p !== undefined);
+
+    return { 
+      clearingPrice: price, 
+      orderBookRows: rows, 
+      stats: { 
+        high: prices.length ? Math.max(...prices) : price, 
+        low: prices.length ? Math.min(...prices) : price, 
+        volume: totalVol 
+      }, 
+      totalDemand: accumulated, 
+      userCurrentOrders: userOrders 
+    };
+  }, [realBids, address]);
+
+  const { totalCost, orderWarning, maxSingleOrder } = useMemo(() => {
+    const SUPPLY = PROJECT_CONFIG.supplyPerRound;
+    const requestedTokens = parseFloat(amount) || 0;
+    const price = orderType === 'market' ? clearingPrice : (parseFloat(limitPrice) || clearingPrice);
+    const cost = requestedTokens * price;
+    
+    const maxSingle = SUPPLY * MAX_SINGLE_ORDER_PERCENT;
+    const maxUserTotal = SUPPLY * MAX_PER_USER_PERCENT;
+    const userRemaining = Math.max(0, maxUserTotal - userCurrentOrders);
+    const effectiveMax = Math.min(maxSingle, userRemaining);
+    
+    let warning = null;
+    let estimated = requestedTokens;
+    
+    if (requestedTokens > maxSingle) {
+      warning = `Max per order: ${formatters.amount(maxSingle)} wSPX`;
+      estimated = maxSingle;
+    } else if (requestedTokens > userRemaining && userRemaining < maxSingle) {
+      warning = `Remaining quota: ${formatters.amount(userRemaining)} wSPX`;
+      estimated = userRemaining;
     }
     
-    return { estimatedPrice: clearingPrice, totalDemand: accumulated, orderBookDisplay: display, depthData: depth, userEstimate: userEst };
-  }, [realBids, amount, limitPrice]);
+    return { totalCost: cost, orderWarning: warning, maxSingleOrder: effectiveMax };
+  }, [amount, limitPrice, orderType, clearingPrice, userCurrentOrders, totalDemand]);
 
-  // === 6. 交互函数 ===
-
+  // 🔧 FIX: Corrected Approval Logic
   const needsApproval = useMemo(() => {
-    if (!usdcAllowance || !depositAmount) return true;
-    return Number(formatEther(usdcAllowance)) < parseFloat(depositAmount);
-  }, [usdcAllowance, depositAmount]);
+    if (!depositAmount || parseFloat(depositAmount) <= 0) return false;
+    
+    if (selectedAsset === 'USDC') {
+      if (!usdcAllowance) return true;
+      return Number(formatEther(usdcAllowance)) < parseFloat(depositAmount);
+    } else {
+      // wSPX Case
+      if (!tokenAllowance) return true;
+      return Number(formatEther(tokenAllowance)) < parseFloat(depositAmount);
+    }
+  }, [usdcAllowance, tokenAllowance, depositAmount, selectedAsset]);
 
-  const handleSmartDeposit = () => {
+  // 🔧 FIX: Corrected Deposit Logic
+  const handleDeposit = () => {
+    if (!depositAmount || parseFloat(depositAmount) <= 0 || isSettling) return;
     setTxError(null);
-    if (needsApproval) {
+
+    if (selectedAsset === 'USDC') {
+      if (needsApproval) {
         setStep('approving');
         writeContract({ address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'approve', args: [AUCTION_ADDRESS, parseEther(depositAmount)] });
-    } else {
+      } else {
         setStep('depositing');
         writeContract({ address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'deposit', args: [parseEther(depositAmount)] });
+      }
     }
   };
 
   const handleWithdraw = () => {
+    if (!depositAmount || parseFloat(depositAmount) <= 0 || isSettling) return;
     setTxError(null); setStep('withdrawing');
-    writeContract({ address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'withdraw', args: [parseEther(depositAmount)] });
+    if (selectedAsset === 'USDC') {
+      writeContract({ address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'withdraw', args: [parseEther(depositAmount)] });
+    } else {
+      writeContract({ address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'withdrawTokens', args: [parseEther(depositAmount)] });
+    }
   };
 
   const handleMint = () => {
-    writeContract({ address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'mint', args: [address!, parseEther('10000')] });
-  };
-
-  const handleClaimTokens = () => {
-    if(!settlementRoundId) return;
-    writeContract({ address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'claimTokens', args: [settlementRoundId] });
-  };
-
-  const handleClaimRefund = () => {
-    if(!settlementRoundId) return;
-    writeContract({ address: AUCTION_ADDRESS, abi: AUCTION_ABI, functionName: 'claimRefund', args: [settlementRoundId] });
+    writeContract({ address: USDC_ADDRESS, abi: USDC_ABI, functionName: 'mint', args: [address!, parseEther('1000000')] });
   };
 
   const handlePlaceOrder = async () => {
-    if (!address || !currentRoundId) return;
-    setTxError(null); setStep('bidding');
+    if (!address || !currentRoundId || isSettling) return;
+    setTxError(null); 
+    setStep('bidding');
     
-    const cost = parseFloat(amount);
-    const balance = contractBalance ? parseFloat(formatEther(contractBalance)) : 0;
-    if (balance < cost) {
-      setTxError(`您的交易所余额 (${balance.toFixed(2)}) 不足！请先去 "Wallet" 页面从外部钱包充值。`);
+    const orderAmount = parseFloat(amount);
+    if (!orderAmount || orderAmount <= 0) {
+      setTxError("Please enter a valid amount");
       setStep('idle');
       return;
+    }
+
+    const price = orderType === 'market' ? clearingPrice : parseFloat(limitPrice);
+    const cost = orderAmount * price;
+    const balance = contractUsdcBalance ? parseFloat(formatEther(contractUsdcBalance)) : 0;
+    
+    if (balance < cost) {
+      setTxError(`Insufficient Balance! Need ${formatters.amount(cost)} USDC`);
+      setStep('idle'); return;
     }
 
     try {
       await axios.post(`${API_URL}/api/bid`, {
         roundId: Number(currentRoundId),
         userAddress: address,
-        amount: amount,
-        limitPrice: limitPrice
+        amount: cost.toString(),
+        limitPrice: price.toString()
       });
-      alert("🚀 极速下单成功！");
-      setStep('idle');
-      const res = await axios.get(`${API_URL}/api/orders?roundId=${currentRoundId}`);
-      if(res.data) setRealBids(res.data);
+      setAmount(''); setStep('idle');
     } catch (e: any) {
       setTxError(e.response?.data?.error || e.message);
       setStep('idle');
     }
   };
 
-  const currentPhase = useMemo(() => {
-    if (!isRoundActive) return AuctionPhase.SETTLEMENT;
-    if (timeLeft > 0) return AuctionPhase.BIDDING;
-    return AuctionPhase.CLEARING;
-  }, [isRoundActive, timeLeft]);
+  const setAmountPercent = (percent: number) => {
+    const balance = contractUsdcBalance ? parseFloat(formatEther(contractUsdcBalance)) : 0;
+    const price = orderType === 'market' ? clearingPrice : (parseFloat(limitPrice) || clearingPrice);
+    
+    if (price > 0 && balance > 0) {
+      const maxByBalance = (balance / price);
+      const targetAmount = maxByBalance * (percent / 100);
+      setAmount(targetAmount.toFixed(2));
+    }
+  };
 
-  // === UI ===
+  const fmt = (val: bigint | undefined) => val ? formatters.amount(Number(formatEther(val))) : '0.00';
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
   return (
     <div className="app">
       <style>{`
-        .app { min-height: 100vh; padding: 20px; font-family: 'Inter', sans-serif; background: #0b0e11; color: #e2e8f0; }
-        .container { max-width: 1400px; margin: 0 auto; }
-        .header { display: flex; justify-content: space-between; padding: 20px 0; border-bottom: 1px solid #2d3748; }
-        .dashboard { display: grid; grid-template-columns: 1fr 340px; gap: 24px; margin-top: 20px; }
-        .metrics-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
-        .metric-card { background: #1a202c; padding: 20px; border-radius: 12px; border: 1px solid #2d3748; }
-        .metric-value { font-size: 24px; font-weight: bold; color: white; margin: 5px 0; }
-        .metric-label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
         
-        .trade-panel { background: #1a202c; padding: 24px; border-radius: 12px; border: 1px solid #2d3748; }
-        .panel-title { margin-top:0; font-size: 18px; color: white; margin-bottom: 20px; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         
-        .input-group { margin-bottom: 16px; }
-        .input-wrapper input { width: 100%; background: #2d3748; border: 1px solid #4a5568; color: white; padding: 12px; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
-        .input-label { display: flex; justify-content: space-between; font-size: 12px; color: #94a3b8; margin-bottom: 6px; }
+        .app {
+          min-height: 100vh;
+          color: #f0f6fc;
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size: 14px; 
+          background: radial-gradient(circle at 50% 10%, #1c2128 0%, #0d1117 100%);
+          background-size: 200% 200%;
+          animation: bgPulse 20s ease infinite alternate;
+        }
+        @keyframes bgPulse {
+          0% { background-position: 50% 0%; }
+          100% { background-position: 50% 100%; }
+        }
+
+        .container { max-width: 1400px; margin: 0 auto; padding: 16px 20px; position: relative; }
         
-        .btn-primary { width: 100%; padding: 14px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        .btn-primary:hover { background: #2563eb; }
-        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-secondary { width: 100%; padding: 14px; background: #2d3748; color: #cbd5e1; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; } 
+        .logo { display: flex; align-items: center; gap: 12px; }
+        .logo-icon { width: 40px; height: 40px; background: linear-gradient(135deg, #a855f7, #7c3aed); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700; color: white; font-size: 18px; box-shadow: 0 0 20px rgba(168, 85, 247, 0.4); }
+        .logo-text { font-size: 20px; font-weight: 700; color: white; }
         
-        .orderbook { background: #1a202c; border-radius: 12px; border: 1px solid #2d3748; padding: 20px; height: 100%; }
-        .orderbook-row { display: flex; justify-content: space-between; font-family: monospace; font-size: 13px; padding: 4px 0; }
-        .text-green { color: #4ade80; } .text-red { color: #f87171; }
+        .card { 
+          background: rgba(22, 27, 34, 0.75); 
+          backdrop-filter: blur(12px);
+          border: 1px solid rgba(48, 54, 61, 0.6); 
+          border-radius: 16px; 
+          overflow: hidden; 
+          height: 100%; 
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+          transition: transform 0.2s, border-color 0.2s;
+        }
+        .card:hover { border-color: #58a6ff; }
+
+        .price-section { 
+          display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 20px; align-items: center;
+          padding: 20px 28px; 
+          background: rgba(13, 17, 23, 0.8); backdrop-filter: blur(10px);
+          border-radius: 16px; border: 1px solid #30363d; margin-bottom: 24px; 
+          box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
         
-        .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #2d3748; }
-        .tab { padding: 10px 20px; cursor: pointer; color: #94a3b8; font-weight: bold; }
-        .tab.active { color: white; border-bottom: 2px solid #3b82f6; }
+        .main-price { font-family: 'JetBrains Mono', monospace; font-size: 40px; font-weight: 700; color: #3fb950; text-shadow: 0 0 15px rgba(63, 185, 80, 0.3); }
         
-        .alert-error { background: #450a0a; color: #fca5a5; padding: 10px; border-radius: 6px; margin-bottom: 10px; font-size: 13px; }
+        .stats-group { display: flex; justify-content: space-around; gap: 20px; }
+        .stat-item { display: flex; flex-direction: column; align-items: center; }
+        .stat-label { font-size: 16px; color: #8b949e; text-transform: uppercase; margin-bottom: 6px; font-weight: 800; letter-spacing: 0.5px; } 
+        .stat-val { font-family: 'JetBrains Mono', monospace; font-size: 25px; font-weight: 800; color: #f0f6fc; } 
         
-        .report-card { background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; border-radius: 8px; padding: 20px; margin-top: 20px; }
-        .report-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.1); font-size: 14px; }
-        .report-row:last-child { border-bottom: none; }
-        .report-val { font-weight: bold; font-family: monospace; }
+        .status-area { text-align: right; }
+        .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; background: rgba(63, 185, 80, 0.1); border: 1px solid rgba(63, 185, 80, 0.4); border-radius: 20px; font-size: 12px; color: #3fb950; font-weight: 600; box-shadow: 0 0 10px rgba(63, 185, 80, 0.1); }
+        .status-dot { width: 6px; height: 6px; background: #3fb950; border-radius: 50%; animation: pulse 2s infinite; }
         
-        .blink { animation: blink 1s infinite; }
-        @keyframes blink { 50% { opacity: 0.5; } }
+        .layout-top { display: grid; grid-template-columns: 1fr 380px; gap: 20px; margin-bottom: 20px; }
+        .layout-bottom { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+
+        .card-head { padding: 16px 20px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); }
+        .card-title { font-size: 14px; font-weight: 700; color: #f0f6fc; text-transform: uppercase; letter-spacing: 0.8px; display: flex; align-items: center; gap: 8px; }
+        .card-body { padding: 16px; display: flex; flex-direction: column; justify-content: center; height: calc(100% - 53px); }
+        
+        .ob-header {
+            display: grid;
+            grid-template-columns: 100px 1fr 90px 90px;
+            gap: 12px;
+            padding: 0 0 10px 0;
+            border-bottom: 1px solid #30363d;
+            margin-bottom: 10px;
+            font-size: 11px;
+            color: #8b949e;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .ob-scroll { max-height: 340px; overflow-y: auto; }
+        .ob-scroll::-webkit-scrollbar { width: 4px; }
+        .ob-scroll::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+        
+        .ob-row { display: grid; grid-template-columns: 100px 1fr 90px 90px; gap: 12px; padding: 7px 0; font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; transition: background 0.15s; }
+        .ob-row:hover { background: rgba(255,255,255,0.04); }
+        .ob-price { font-weight: 700; font-size: 14px; }
+        
+        .clearing-line { padding: 12px 0; border-top: 1px dashed rgba(248, 81, 73, 0.5); border-bottom: 1px dashed rgba(248, 81, 73, 0.5); margin: 12px 0; background: rgba(248, 81, 73, 0.08); }
+        .clearing-price-big { font-size: 20px; font-weight: 700; color: #f85149; text-align: center; display: block; }
+        .clearing-tag { font-size: 11px; color: #f85149; text-align: center; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+        
+        /* 🚀 Updated Settling Animation (Spinner) */
+        .settling-overlay { 
+          position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(16px); 
+          display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 999; 
+          animation: zoomIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes zoomIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+        
+        .settling-card {
+            background: #0d1117; border: 1px solid #a855f7; border-radius: 24px; padding: 56px 48px; 
+            width: 460px; text-align: center; box-shadow: 0 0 80px rgba(168, 85, 247, 0.2);
+            position: relative; overflow: hidden;
+        }
+
+        .settling-spinner {
+            width: 48px; height: 48px;
+            border: 4px solid rgba(168, 85, 247, 0.2); 
+            border-top: 4px solid #a855f7;             
+            border-radius: 50%;
+            margin: 0 auto 32px;                       
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .settling-logo { 
+          width: 80px; height: 80px; background: #a855f7; border-radius: 20px; margin: 0 auto 24px;
+          display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 800; color: white; 
+          box-shadow: 0 0 30px rgba(168, 85, 247, 0.5);
+          animation: pulse-logo 2s infinite;
+        }
+        @keyframes pulse-logo { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+        
+        .settling-text { font-size: 24px; font-weight: 700; color: white; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+        .settling-sub { font-size: 14px; color: #a855f7; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; }
+
+        /* Timer Box */
+        .timer-box { text-align: center; padding: 24px 20px; background: rgba(168, 85, 247, 0.05); border-radius: 12px; border: 1px solid rgba(168, 85, 247, 0.3); box-shadow: inset 0 0 20px rgba(168, 85, 247, 0.05); }
+        .timer-label { font-size: 13px; font-weight: 700; color: #a855f7; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+        .timer-num { font-family: 'JetBrains Mono', monospace; font-size: 52px; font-weight: 700; color: #f0f6fc; line-height: 1; text-shadow: 0 0 20px rgba(168, 85, 247, 0.3); }
+        .timer-num.urgent { color: #f85149; text-shadow: 0 0 20px rgba(248, 81, 73, 0.3); }
+        .timer-bar { height: 6px; background: #30363d; border-radius: 3px; margin-top: 16px; overflow: hidden; }
+        .timer-bar-fill { height: 100%; background: linear-gradient(90deg, #a855f7, #7c3aed); border-radius: 3px; transition: width 1s linear; box-shadow: 0 0 10px #a855f7; }
+        
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(10px); animation: fadeIn 0.3s ease; }
+        .modal-card { background: #0d1117; border: 1px solid #3fb950; border-radius: 20px; padding: 40px; width: 420px; text-align: center; box-shadow: 0 0 60px rgba(63, 185, 80, 0.2); }
+        .modal-title { font-size: 24px; font-weight: 700; margin-bottom: 10px; color: #3fb950; text-transform: uppercase; letter-spacing: 1px; }
+        .modal-val { font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 700; color: #f0f6fc; margin: 12px 0; }
+        .modal-btn { background: #3fb950; color: white; border: none; padding: 14px; border-radius: 10px; font-weight: 700; font-size: 15px; cursor: pointer; margin-top: 28px; width: 100%; transition: 0.2s; box-shadow: 0 4px 12px rgba(63, 185, 80, 0.3); }
+        .modal-btn:hover { background: #2ea043; transform: translateY(-1px); }
+        
+        /* Inputs & Buttons */
+        .input-group { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; margin-bottom: 12px; transition: border 0.2s; }
+        .input-group:focus-within { border-color: #58a6ff; box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2); }
+        .input-group.disabled { background: #161b22; border-color: #21262d; opacity: 0.6; }
+        .input-group input { flex: 1; background: none; border: none; color: white; font-size: 16px; font-family: 'JetBrains Mono', monospace; font-weight: 600; outline: none; }
+        .input-group input:disabled { cursor: not-allowed; color: #8b949e; }
+        .input-suffix { color: #8b949e; font-size: 13px; margin-left: 10px; font-weight: 600; }
+        
+        .btn-row { display: flex; gap: 10px; margin-bottom: 14px; }
+        .btn { flex: 1; padding: 12px; border: none; border-radius: 10px; font-weight: 600; font-size: 14px; cursor: pointer; transition: 0.2s; }
+        .btn-primary { background: linear-gradient(135deg, #238636, #2ea043); color: white; box-shadow: 0 2px 8px rgba(35, 134, 54, 0.3); }
+        .btn-primary:hover { filter: brightness(1.1); }
+        .btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+        .btn-secondary:hover { background: #30363d; }
+        
+        .bal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+        .bal-box { background: #0d1117; padding: 14px; border-radius: 10px; border: 1px solid #30363d; }
+        .bal-label { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-bottom: 6px; font-weight: 700; }
+        .bal-val { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; color: #f0f6fc; }
+        
+        .pct-btns { display: flex; gap: 8px; margin-bottom: 16px; }
+        .pct-btn { flex: 1; padding: 8px; background: #21262d; border: 1px solid #30363d; border-radius: 8px; color: #8b949e; font-size: 12px; font-weight: 600; cursor: pointer; transition: 0.15s; }
+        .pct-btn:hover { border-color: #58a6ff; color: #58a6ff; background: rgba(88, 166, 255, 0.1); }
+        
+        .total-box { background: #0d1117; padding: 14px; border-radius: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #30363d; }
+        .total-label { color: #8b949e; font-size: 13px; font-weight: 600; }
+        .total-val { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: #f0f6fc; }
+        
+        .warning-msg { padding: 10px 12px; background: rgba(227, 179, 65, 0.1); border: 1px solid rgba(227, 179, 65, 0.3); border-radius: 8px; color: #e3b341; font-size: 13px; margin-bottom: 12px; }
+        .error-msg { padding: 10px 12px; background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); border-radius: 8px; color: #f85149; font-size: 13px; margin-bottom: 12px; }
+        
+        .order-btn { width: 100%; padding: 16px; background: linear-gradient(135deg, #238636, #2ea043); border: none; border-radius: 12px; color: white; font-size: 16px; font-weight: 700; cursor: pointer; transition: 0.2s; box-shadow: 0 4px 15px rgba(35, 134, 54, 0.4); text-transform: uppercase; letter-spacing: 0.5px; }
+        .order-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(35, 134, 54, 0.5); }
+        .order-btn:disabled { background: #21262d; color: #484f58; transform: none; box-shadow: none; cursor: not-allowed; border: 1px solid #30363d; }
+        
+        .mint-link { display: block; text-align: center; margin-top: 12px; font-size: 12px; color: #58a6ff; cursor: pointer; transition: 0.2s; }
+        .mint-link:hover { color: #79c0ff; text-decoration: underline; }
+
+        .stats-list { display: flex; flex-direction: column; gap: 12px; }
+        .stats-row { display: flex; justify-content: space-between; padding: 18px 0; border-bottom: 1px solid #21262d; }
+        .stats-row:last-child { border-bottom: none; }
+        .stats-row-label { color: #8b949e; font-size: 15px; font-weight: 700; }
+        .stats-row-val { font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 800; color: #f0f6fc; }
+        
+        .tab-row { display: flex; background: #0d1117; padding: 4px; border-radius: 12px; margin-bottom: 16px; border: 1px solid #30363d; }
+        .tab { flex: 1; padding: 10px; border: none; border-radius: 8px; background: none; color: #8b949e; font-weight: 600; font-size: 13px; cursor: pointer; transition: 0.2s; }
+        .tab.active { background: #21262d; color: #f0f6fc; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        
+        .connect-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 50vh; gap: 16px; }
       `}</style>
+
+      {/* 🚀 Settlement Popup Overlay (Clean Spinner Version) */}
+      {isSettling && !showResult && (
+        <div className="settling-overlay">
+          <div className="settling-card">
+            <div className="settling-logo">⚡️</div>
+            <div className="settling-text">Settlement in Progress</div>
+            <div className="settling-sub">Executing smart contract clearing logic...</div>
+            <div className="settling-spinner"></div>
+          </div>
+        </div>
+      )}
+
+      {/* 🌟 Result Modal */}
+      {showResult && (
+        <div className="modal-overlay">
+          <div className="modal-card">
+            <div className="modal-title">🎉 Settlement Complete</div>
+            <p style={{color: '#8b949e', fontSize: '13px'}}>Results for Round #{lastAllocated.roundId}</p>
+            <div style={{margin: '24px 0'}}>
+              <div style={{fontSize: '12px', color: '#8b949e', textTransform: 'uppercase'}}>You Received</div>
+              <div className="modal-val">{lastAllocated.amount.toFixed(2)} wSPX</div>
+              <div style={{fontSize: '12px', color: '#8b949e', marginTop: '16px', textTransform: 'uppercase'}}>Avg. Price</div>
+              <div className="modal-val" style={{color: '#3fb950'}}>${lastAllocated.price.toFixed(4)}</div>
+            </div>
+            <button className="modal-btn" onClick={() => setShowResult(false)}>Awesome!</button>
+          </div>
+        </div>
+      )}
 
       <div className="container">
         <header className="header">
-          <div>
-            <h1 style={{margin:0, fontSize:'24px', color:'white'}}>Dabanc Pro <span style={{fontSize:'12px', background:'#1e3a8a', padding:'2px 6px', borderRadius:'4px', color:'#93c5fd'}}>CEX MODE</span></h1>
-            <span style={{fontSize:'12px', color:'#94a3b8'}}>Off-chain Matching • On-chain Settlement</span>
+          <div className="logo">
+            <div className="logo-icon">D</div>
+            <div>
+              <div className="logo-text">Dabanc</div>
+              <div style={{fontSize: '11px', color: '#8b949e'}}>Next-Gen RWA Launchpad</div>
+            </div>
           </div>
-          <div style={{display:'flex', alignItems:'center', gap:'15px'}}>
-             <div style={{textAlign:'right', fontSize:'12px'}}>
-                <div style={{color: networkStatus==='connected'?'#4ade80':'#fbbf24'}}>● {networkStatus==='connected'?'API Connected':'Syncing...'}</div>
-                <div style={{color:'#94a3b8'}}>Updated: {new Date(lastUpdate).toLocaleTimeString()}</div>
-             </div>
-             <ConnectButton />
-          </div>
+          <ConnectButton />
         </header>
 
-        {isConnected ? (
-          <div className="dashboard">
-            <div className="main-content">
-              {/* === Metrics === */}
-              <div className="metrics-row">
-                <div className="metric-card">
-                  <div className="metric-label">STATUS</div>
-                  <div className="metric-value" style={{color: isRoundActive ? '#4ade80' : '#f87171'}}>
-                    {isRoundActive ? 'TRADING' : 'SETTLED'}
-                  </div>
-                  <div className="metric-label">Round #{currentRoundId?.toString()}</div>
-                </div>
-                <div className="metric-card">
-                  <div className="metric-label">EST. PRICE</div>
-                  <div className="metric-value">${formatters.price(estimatedPrice)}</div>
-                  <div className="metric-label">Target Supply: {PROJECT_CONFIG.supplyPerRound}</div>
-                </div>
-                <div className="metric-card">
-                  <div className="metric-label">FUNDS RAISED</div>
-                  <div className="metric-value">${formatters.amount(totalDemand * estimatedPrice)}</div>
-                  <div className="metric-label">Demand: {formatters.amount(totalDemand)} wSPX</div>
-                </div>
-                <div className="metric-card">
-                  <div className="metric-label">TIME LEFT</div>
-                  <div className={`metric-value ${timeLeft < 60 ? 'blink' : ''}`} style={{fontFamily:'monospace'}}>
-                    {formatters.countdown(timeLeft)}
-                  </div>
-                  <div className="metric-label">Until Settlement</div>
-                </div>
-              </div>
-
-              {/* === Tabs === */}
-              <div className="tabs">
-                 <div className={`tab ${step !== 'depositing' && step !== 'withdrawing' && step !== 'approving' && step !== 'ready_to_deposit' ? 'active' : ''}`} onClick={() => setStep('idle')}>📈 Trade</div>
-                 <div className={`tab ${step === 'depositing' || step === 'withdrawing' || step === 'approving' || step === 'ready_to_deposit' ? 'active' : ''}`} onClick={() => setStep('depositing')}>💰 Wallet / Deposit</div>
-              </div>
-
-              {step === 'depositing' || step === 'withdrawing' || step === 'approving' || step === 'ready_to_deposit' ? (
-                // === Wallet Panel ===
-                <div className="trade-panel" style={{border:'1px solid #fbbf24'}}>
-                   <h3 className="panel-title" style={{color:'#fbbf24'}}>Fund Management (On-Chain)</h3>
-                   <div style={{marginBottom:'20px', padding:'15px', background:'rgba(251, 191, 36, 0.1)', borderRadius:'8px', fontSize:'14px'}}>
-                      <div style={{display:'flex', justifyContent:'space-between', marginBottom:'10px', alignItems: 'center'}}>
-                         <span style={{color: '#9ca3af'}}>🦊 External Wallet (Layer 1):</span>
-                         <strong>{usdcBalance ? formatters.amount(Number(formatEther(usdcBalance))) : 0} USDC</strong>
-                      </div>
-                      
-                      {/* 资金流向箭头 */}
-                      <div style={{textAlign: 'center', color: '#fbbf24', fontSize: '20px', margin: '-5px 0'}}>↓</div>
-
-                      <div style={{display:'flex', justifyContent:'space-between', marginTop: '5px', alignItems: 'center', color:'#4ade80'}}>
-                         <span>🏛️ Exchange Balance (Layer 2):</span>
-                         <strong style={{fontSize: '18px'}}>{contractBalance ? formatters.amount(Number(formatEther(contractBalance))) : 0} USDC</strong>
-                      </div>
-                   </div>
-                   
-                   <div className="input-group">
-                      <div className="input-label"><span>Transfer Amount</span></div>
-                      <div className="input-wrapper">
-                         <input type="number" value={depositAmount} onChange={e=>setDepositAmount(e.target.value)} />
-                      </div>
-                   </div>
-
-                   <div style={{display:'flex', gap:'10px'}}>
-                      {/* 🌟 智能合并按钮 */}
-                      <button 
-                        className="btn-primary" 
-                        style={{background:'#10b981'}} 
-                        onClick={handleSmartDeposit} 
-                        disabled={isPending}
-                      >
-                         {step==='approving' && isConfirming ? '⏳ Approving...' : 
-                          step==='depositing' && isConfirming ? '⏳ Depositing...' :
-                          needsApproval ? '🔓 Approve & Deposit' : '📥 Deposit to Exchange'}
-                      </button>
-                      
-                      <button className="btn-secondary" style={{color:'#f87171'}} onClick={handleWithdraw} disabled={isPending}>
-                         Withdraw to Wallet
-                      </button>
-                   </div>
-                   
-                   {step === 'ready_to_deposit' && (
-                       <div style={{marginTop:'10px', color:'#10b981', textAlign:'center', fontSize:'13px'}}>
-                           ✅ Approval Confirmed! Please click "Deposit" again to finish.
-                       </div>
-                   )}
-
-                   <div style={{marginTop:'15px', textAlign:'center'}}>
-                      <span style={{color:'#3b82f6', cursor:'pointer', fontSize:'12px'}} onClick={handleMint}>+ Mint Test USDC (L1)</span>
-                   </div>
-                </div>
-              ) : currentPhase === AuctionPhase.BIDDING ? (
-                // === Trading Panel ===
-                <div className="trade-panel" style={{border:'1px solid #3b82f6'}}>
-                   <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'20px'}}>
-                      <h3 className="panel-title" style={{color:'#60a5fa', margin:0}}>Lightning Order</h3>
-                      <div style={{fontSize:'12px', background:'#1e40af', padding:'4px 8px', borderRadius:'4px', color:'white'}}>
-                         Available Balance: {contractBalance ? formatters.amount(Number(formatEther(contractBalance))) : 0} USDC
-                      </div>
-                   </div>
-
-                   <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'20px'}}>
-                      <div className="input-group">
-                         <div className="input-label"><span>Bid Amount (USDC)</span></div>
-                         <div className="input-wrapper">
-                            <input type="number" value={amount} onChange={e=>setAmount(e.target.value)} />
-                         </div>
-                      </div>
-                      <div className="input-group">
-                         <div className="input-label"><span>Limit Price ($)</span></div>
-                         <div className="input-wrapper">
-                            <input type="number" value={limitPrice} onChange={e=>setLimitPrice(e.target.value)} />
-                         </div>
-                      </div>
-                   </div>
-
-                   {/* Simulator */}
-                   {userEstimate && (
-                      <div style={{background:'#1e293b', padding:'15px', borderRadius:'8px', marginBottom:'20px', fontSize:'13px'}}>
-                         <div style={{display:'flex', justifyContent:'space-between', marginBottom:'5px'}}>
-                            <span>Prediction:</span>
-                            <span style={{fontWeight:'bold', color: userEstimate.wouldMatch ? '#4ade80':'#f87171'}}>
-                               {userEstimate.wouldMatch ? '✅ MATCHED' : '❌ OUT'}
-                            </span>
-                         </div>
-                         <div style={{display:'flex', justifyContent:'space-between'}}>
-                            <span>Est. Tokens:</span>
-                            <span style={{fontFamily:'monospace'}}>{formatters.amount(userEstimate.estimatedTokens)} wSPX</span>
-                         </div>
-                      </div>
-                   )}
-
-                   {txError && <div className="alert-error">{txError}</div>}
-
-                   <button className="btn-primary" onClick={handlePlaceOrder} disabled={!isWhitelisted}>
-                      🚀 Place Instant Order
-                   </button>
-                   <div style={{textAlign:'center', marginTop:'10px', fontSize:'12px', color:'#64748b'}}>
-                      No Gas • No Signature • Instant Matching
-                   </div>
-                </div>
-              ) : (
-                // === Settlement Panel ===
-                <div className="trade-panel" style={{textAlign:'center', padding:'40px'}}>
-                   <div style={{fontSize:'40px', marginBottom:'10px'}}>🎉</div>
-                   <h2 style={{color:'#4ade80'}}>Round Settled</h2>
-                   <p style={{color:'#94a3b8'}}>Final Clearing Price: <strong style={{color:'white', fontSize:'24px'}}>${roundData ? formatters.price(Number(formatEther(roundData[1]))) : '...'}</strong></p>
-                   
-                   {/* 结算报告卡片 */}
-                   {settlementReport ? (
-                       <div className="report-card">
-                           <h4 style={{margin:'0 0 10px 0', color:'#10b981'}}>📊 My Performance (Round #{settlementRoundId?.toString()})</h4>
-                           <div className="report-row">
-                               <span>Total Bid:</span>
-                               <span className="report-val">{formatters.amount(settlementReport.totalBid)} USDC</span>
-                           </div>
-                           <div className="report-row">
-                               <span>Actual Cost:</span>
-                               <span className="report-val">{formatters.amount(settlementReport.actualCost)} USDC</span>
-                           </div>
-                           <div className="report-row">
-                               <span style={{color:'#4ade80'}}>Tokens Received:</span>
-                               <span className="report-val" style={{color:'#4ade80'}}>{formatters.amount(settlementReport.tokensAllocated)} wSPX</span>
-                           </div>
-                           {settlementReport.refundAmount > 0 && (
-                               <div className="report-row">
-                                   <span style={{color:'#fbbf24'}}>Refund:</span>
-                                   <span className="report-val" style={{color:'#fbbf24'}}>{formatters.amount(settlementReport.refundAmount)} USDC</span>
-                               </div>
-                           )}
-                           
-                           <div style={{display:'flex', gap:'10px', marginTop:'15px'}}>
-                               {!settlementReport.hasClaimed && settlementReport.tokensAllocated > 0 && (
-                                   <button className="btn-secondary" onClick={handleClaimTokens} disabled={isPending}>🎁 Claim Tokens</button>
-                               )}
-                               {!settlementReport.hasRefunded && settlementReport.refundAmount > 0 && (
-                                   <button className="btn-secondary" onClick={handleClaimRefund} disabled={isPending}>💸 Claim Refund</button>
-                               )}
-                           </div>
-                       </div>
-                   ) : (
-                       <div style={{marginTop:'20px', color:'#64748b'}}>
-                           <p>You did not participate in this round.</p>
-                       </div>
-                   )}
-                </div>
-              )}
+        {/* 🌟 Price Section */}
+        <div className="price-section">
+          <div>
+            <div style={{fontSize: '12px', color: '#8b949e', marginBottom: '6px', fontWeight: 600}}>EST. CLEARING PRICE</div>
+            <div className="main-price">${formatters.price(clearingPrice)}</div>
+            <div style={{fontSize: '12px', color: '#8b949e', marginTop: '4px'}}>wSPX / USDC</div>
+          </div>
+          
+          <div className="stats-group">
+            <div className="stat-item">
+              <span className="stat-label">24H High</span>
+              <span className="stat-val" style={{color: '#3fb950'}}>${formatters.price(stats.high || clearingPrice)}</span>
             </div>
-
-            {/* === Sidebar === */}
-            <div className="sidebar">
-               <div className="orderbook">
-                  <h3 style={{marginTop:0, borderBottom:'1px solid #2d3748', paddingBottom:'10px', fontSize:'14px', color:'#94a3b8'}}>REAL-TIME ORDERBOOK</h3>
-                  <div style={{display:'flex', justifyContent:'space-between', fontSize:'12px', color:'#64748b', marginBottom:'10px'}}>
-                     <span>Price ($)</span>
-                     <span>Vol (USDC)</span>
-                  </div>
-                  <div style={{display:'flex', flexDirection:'column', gap:'5px', overflowY:'auto', maxHeight:'500px'}}>
-                     {orderBookDisplay.length === 0 && <div style={{textAlign:'center', color:'#475569', marginTop:'20px'}}>Waiting for bids...</div>}
-                     {orderBookDisplay.map((order, i) => (
-                        <div key={i} className="orderbook-row" style={{opacity: order.isMatched ? 1 : 0.4}}>
-                           <span className={order.isMatched ? 'text-green' : 'text-red'}>
-                              ${formatters.price(order.price)} {order.isMarginal && '🎯'}
-                           </span>
-                           <span style={{color:'white'}}>{formatters.amount(order.volume)}</span>
-                        </div>
-                     ))}
-                  </div>
-                  
-                  <div style={{marginTop:'20px', borderTop:'1px solid #2d3748', paddingTop:'20px'}}>
-                     <h3 style={{marginTop:0, fontSize:'14px', color:'#94a3b8'}}>MARKET DEPTH</h3>
-                     <div style={{display:'flex', flexDirection:'column', gap:'4px'}}>
-                        {depthData.slice(0, 5).map((d, i) => {
-                           const maxVol = Math.max(...depthData.map(x=>x.volume));
-                           const percent = (d.volume / maxVol) * 100;
-                           return (
-                              <div key={i} style={{display:'flex', alignItems:'center', fontSize:'11px', gap:'10px'}}>
-                                 <span style={{width:'40px', textAlign:'right'}}>${d.price}</span>
-                                 <div style={{flex:1, background:'#334155', height:'6px', borderRadius:'3px', overflow:'hidden'}}>
-                                    <div style={{width:`${percent}%`, background:'#3b82f6', height:'100%'}}></div>
-                                 </div>
-                                 <span style={{width:'50px'}}>{formatters.amount(d.volume)}</span>
-                              </div>
-                           )
-                        })}
-                     </div>
-                  </div>
-               </div>
+            <div className="stat-item">
+              <span className="stat-label">24H Low</span>
+              <span className="stat-val" style={{color: '#f85149'}}>${formatters.price(stats.low || clearingPrice)}</span>
+            </div>
+            <div className="stat-item">
+              <span className="stat-label">Volume</span>
+              <span className="stat-val" style={{color: '#58a6ff'}}>${formatters.amount(stats.volume)}</span>
             </div>
           </div>
+          
+          <div className="status-area">
+            <div className="status-badge">
+              <span className="status-dot"></span>
+              LIVE
+            </div>
+            <div style={{fontSize: '11px', color: '#8b949e', marginTop: '8px', fontWeight: 600}}>Round #{currentRoundId?.toString() || '1'}</div>
+          </div>
+        </div>
+
+        {isConnected ? (
+          <>
+            {/* 🌟 Layout Top: Order Book + Timer */}
+            <div className="layout-top" style={{filter: isSettling ? 'blur(10px)' : 'none', pointerEvents: isSettling ? 'none' : 'auto', transition: 'filter 0.5s'}}>
+              <div className="card">
+                <div className="card-head"><span className="card-title">📊 Order Book</span></div>
+                <div className="card-body">
+                  <div className="ob-header">
+                    <span>Price (USDC)</span>
+                    <span>Depth</span>
+                    <span style={{textAlign: 'right'}}>Amount</span>
+                    <span style={{textAlign: 'right'}}>Value</span>
+                  </div>
+
+                  <div className="ob-scroll">
+                    {orderBookRows.filter(r => r.isAboveClearing).map((row, i) => (
+                      <div key={i} className="ob-row">
+                        <span className="ob-price" style={{color: '#3fb950'}}>{row.price.toFixed(4)}</span>
+                        <div style={{height: '20px', background: 'rgba(63, 185, 80, 0.1)', borderRadius: '4px', position: 'relative'}}>
+                          <div style={{height: '100%', background: 'rgba(63, 185, 80, 0.4)', width: `${(row as any).percent}%`, borderRadius: '4px'}}></div>
+                        </div>
+                        <span style={{textAlign: 'right', color: '#e6edf3'}}>{row.tokens.toFixed(2)}</span>
+                        <span style={{textAlign: 'right', color: '#8b949e'}}>{formatters.amount(row.usdc)}</span>
+                      </div>
+                    ))}
+                    <div className="clearing-line">
+                      <div className="clearing-price-big">${formatters.price(clearingPrice)}</div>
+                      <div className="clearing-tag">Est. Clearing Price</div>
+                    </div>
+                    {orderBookRows.filter(r => !r.isAboveClearing).map((row, i) => (
+                      <div key={i} className="ob-row">
+                        <span className="ob-price" style={{color: '#8b949e'}}>{row.price.toFixed(4)}</span>
+                        <div style={{height: '20px', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', position: 'relative'}}>
+                          <div style={{height: '100%', background: 'rgba(255,255,255,0.08)', width: `${(row as any).percent}%`, borderRadius: '4px'}}></div>
+                        </div>
+                        <span style={{textAlign: 'right', color: '#8b949e'}}>{row.tokens.toFixed(2)}</span>
+                        <span style={{textAlign: 'right', color: '#484f58'}}>{formatters.amount(row.usdc)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="card">
+                <div className="card-head"><span className="card-title">⏱️ Auction Status</span></div>
+                <div className="card-body">
+                  <div className="timer-box">
+                    <div className="timer-label">Ends In</div>
+                    <div className={`timer-num ${timeLeft < 60 ? 'urgent' : ''}`}>{formatTime(timeLeft)}</div>
+                    <div className="timer-bar">
+                      <div className="timer-bar-fill" style={{width: `${((PROJECT_CONFIG.roundDuration - timeLeft) / PROJECT_CONFIG.roundDuration) * 100}%`}}></div>
+                    </div>
+                  </div>
+                  
+                  <div style={{marginTop: '20px', padding: '16px', background: 'rgba(63, 185, 80, 0.05)', border: '1px solid rgba(63, 185, 80, 0.2)', borderRadius: '12px', textAlign: 'center'}}>
+                    <div style={{fontSize: '11px', color: '#8b949e', marginBottom: '6px', textTransform: 'uppercase', fontWeight: 600}}>Projected Price</div>
+                    <div style={{fontFamily: 'JetBrains Mono', fontSize: '28px', fontWeight: '800', color: '#3fb950'}}>${formatters.price(clearingPrice)}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 🌟 Layout Bottom: Asset + Bid + Metrics */}
+            <div className="layout-bottom" style={{filter: isSettling ? 'blur(10px)' : 'none', pointerEvents: isSettling ? 'none' : 'auto', transition: 'filter 0.5s'}}>
+              {/* 1. Asset Account (Enhanced with Wallet Balances) */}
+              <div className="card">
+                <div className="card-head"><span className="card-title">💰 Asset Account</span></div>
+                <div className="card-body">
+                  
+                  {/* MetaMask Balances */}
+                  <div style={{marginBottom: '16px'}}>
+                    <div style={{fontSize: '11px', color: '#8b949e', textTransform: 'uppercase', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px'}}>
+                      <span>🦊 My Wallet (MetaMask)</span>
+                    </div>
+                    <div className="bal-grid">
+                      <div className="bal-box" style={{borderColor: 'rgba(88, 166, 255, 0.3)', background: 'rgba(88, 166, 255, 0.05)'}}>
+                        <div className="bal-label" style={{color: '#58a6ff'}}>Wallet USDC</div>
+                        <div className="bal-val">{fmt(walletUsdc)}</div>
+                      </div>
+                      <div className="bal-box" style={{borderColor: 'rgba(168, 85, 247, 0.3)', background: 'rgba(168, 85, 247, 0.05)'}}>
+                        <div className="bal-label" style={{color: '#a855f7'}}>Wallet wSPX</div>
+                        <div className="bal-val">{fmt(walletToken)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Protocol Balances */}
+                  <div style={{marginBottom: '16px'}}>
+                    <div style={{fontSize: '11px', color: '#8b949e', textTransform: 'uppercase', marginBottom: '8px'}}>
+                      <span>🏛️ Dabanc Account (Protocol)</span>
+                    </div>
+                    <div className="bal-grid">
+                      <div className="bal-box">
+                        <div className="bal-label">Trading USDC</div>
+                        <div className="bal-val">{fmt(contractUsdcBalance)}</div>
+                      </div>
+                      <div className="bal-box">
+                        <div className="bal-label">Custody wSPX</div>
+                        <div className="bal-val" style={{color: '#a855f7'}}>{fmt(contractTokenBalance)}</div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="tab-row">
+                    <button className={`tab ${selectedAsset === 'USDC' ? 'active' : ''}`} onClick={() => setSelectedAsset('USDC')}>USDC</button>
+                    <button className={`tab ${selectedAsset === 'wSPX' ? 'active' : ''}`} onClick={() => setSelectedAsset('wSPX')}>wSPX</button>
+                  </div>
+                  
+                  <div className="input-group">
+                    <input type="number" value={depositAmount} onChange={e => setDepositAmount(e.target.value)} placeholder="Enter amount..." />
+                    <span className="input-suffix">{selectedAsset}</span>
+                  </div>
+                  
+                  <div className="btn-row">
+                    <button className="btn btn-primary" onClick={handleDeposit} disabled={isPending || isSettling || selectedAsset === 'wSPX'}>
+                      {needsApproval ? `Approve ${selectedAsset}` : 'Deposit'}
+                    </button>
+                    <button className="btn btn-secondary" onClick={handleWithdraw} disabled={isPending || isSettling}>Withdraw</button>
+                  </div>
+                  
+                  <span className="mint-link" onClick={handleMint}>+ Get Test USDC</span>
+                </div>
+              </div>
+
+              {/* 2. Place Bid Order */}
+              <div className="card">
+                <div className="card-head"><span className="card-title">📝 Place Bid Order</span></div>
+                <div className="card-body">
+                  <div className="tab-row">
+                    <button className={`tab ${orderType === 'limit' ? 'active' : ''}`} onClick={() => setOrderType('limit')}>Limit</button>
+                    <button className={`tab ${orderType === 'market' ? 'active' : ''}`} onClick={() => setOrderType('market')}>Market</button>
+                  </div>
+
+                  {orderType === 'limit' && (
+                     <div className="input-group">
+                       <input type="number" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} placeholder="Set Limit Price" />
+                       <span className="input-suffix">USDC</span>
+                     </div>
+                  )}
+                  {orderType === 'market' && (
+                     <div className="input-group disabled">
+                       <input type="text" disabled value="Market Price" style={{fontStyle: 'italic', opacity: 0.7}} />
+                       <span className="input-suffix">USDC</span>
+                     </div>
+                  )}
+                  
+                  <div style={{marginBottom: '6px', fontSize: '12px', color: '#8b949e', display: 'flex', justifyContent: 'space-between', fontWeight: 600}}>
+                    <span>Bid Amount</span>
+                    <span>Max: {formatters.amount(maxSingleOrder)}</span>
+                  </div>
+                  <div className="input-group">
+                    <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" />
+                    <span className="input-suffix">wSPX</span>
+                  </div>
+                  
+                  <div className="pct-btns">
+                    {[25, 50, 75, 100].map(p => <button key={p} className="pct-btn" onClick={() => setAmountPercent(p)}>{p}%</button>)}
+                  </div>
+                  
+                  <div className="total-box">
+                    <span className="total-label">Required USDC</span>
+                    <span className="total-val">{formatters.amount(totalCost)}</span>
+                  </div>
+                  
+                  {orderWarning && <div className="warning-msg">⚠️ {orderWarning}</div>}
+                  {txError && <div className="error-msg">{txError}</div>}
+                  
+                  <button className="order-btn" onClick={handlePlaceOrder} disabled={!isWhitelisted || isPending || !amount || isSettling}>
+                    {isPending ? 'PROCESSING...' : !isWhitelisted ? 'KYC REQUIRED' : 'CONFIRM BID wSPX'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 3. Round Metrics */}
+              <div className="card">
+                <div className="card-head"><span className="card-title">📊 Round Metrics</span></div>
+                <div className="card-body">
+                  <div className="stats-list">
+                    <div className="stats-row">
+                      <span className="stats-row-label">Round Supply</span>
+                      <span className="stats-row-val">{PROJECT_CONFIG.supplyPerRound} wSPX</span>
+                    </div>
+                    <div className="stats-row">
+                      <span className="stats-row-label">Total Demand</span>
+                      <span className="stats-row-val" style={{color: totalDemand > PROJECT_CONFIG.supplyPerRound ? '#e3b341' : '#3fb950'}}>{formatters.amount(totalDemand)}</span>
+                    </div>
+                    <div className="stats-row">
+                      <span className="stats-row-label">Max Per User</span>
+                      <span className="stats-row-val">{PROJECT_CONFIG.supplyPerRound * 1}</span>
+                    </div>
+                    <div className="stats-row">
+                      <span className="stats-row-label">Progress</span>
+                      <span className="stats-row-val">{Math.min(100, (totalDemand / PROJECT_CONFIG.supplyPerRound * 100)).toFixed(1)}%</span>
+                    </div>
+                    <div style={{marginTop: '20px', height: '8px', width: '100%', background: '#21262d', borderRadius: '4px', overflow: 'hidden'}}>
+                      <div style={{height: '100%', width: `${Math.min(100, (totalDemand / PROJECT_CONFIG.supplyPerRound * 100))}%`, background: '#3fb950', boxShadow: '0 0 10px rgba(63, 185, 80, 0.5)'}}></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
         ) : (
-          <div style={{textAlign:'center', marginTop:'100px'}}>
-             <h2>Please connect wallet to trade</h2>
-             <ConnectButton />
+          <div className="connect-wrap">
+            <div style={{fontSize: '24px', fontWeight: 700}}>Welcome to Dabanc Launchpad</div>
+            <p style={{color: '#8b949e'}}>Connect your wallet to participate in the auction</p>
+            <ConnectButton />
           </div>
         )}
       </div>

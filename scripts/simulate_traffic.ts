@@ -5,12 +5,12 @@ dotenv.config();
 
 const AUCTION_ADDRESS = process.env.AUCTION_ADDRESS || "";
 const USDC_ADDRESS = process.env.USDC_ADDRESS || "";
-const API_URL = "http://localhost:3001/api/bid";
+const API_URL = "http://192.168.188.179:3001/api/bid";
 
 const CONFIG = {
-  minPrice: 1, maxPrice: 20,
-  minAmount: 100, maxAmount: 2000,
-  intervalMin: 500, intervalMax: 1500, 
+  minPrice: 10, maxPrice: 20,
+  minAmount: 10, maxAmount: 200,
+  intervalMin: 5000, intervalMax: 15000, 
   safeBuffer: 20, 
 };
 

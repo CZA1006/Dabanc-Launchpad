@@ -3,11 +3,12 @@
 // ============================================
 
 // === 合约地址 (Sepolia Testnet) ===
-export const AUCTION_ADDRESS = "0x58869Fc469438025C05f62fe98032b651924adAB" as const;
-export const USDC_ADDRESS = "0x3F61E6fD9638Ed9f524df377dF4d20279d5dAAee" as const;
+export const AUCTION_ADDRESS = "0xe44f10e4b810BAcB6D96D8defB4A57733BCdB786" as const;
+export const USDC_ADDRESS = "0x3c76fE5e109ACd229D7F24a630FFae27857538D6" as const;
+export const TOKEN_ADDRESS = "0x8bA807C3198474E760A8E13D07E85E8806547206" as const;
 
 // 🌟 CEX 服务器地址 (指向本地运行的 server.ts)
-export const API_URL = "http://localhost:3001";
+export const API_URL = "http://192.168.188.179:3001";
 
 // === 项目配置 ===
 export const PROJECT_CONFIG = {
@@ -60,6 +61,22 @@ export const AUCTION_ABI = [
     name: "userBalances",
     outputs: [{"internalType": "uint256", "name": "", "type": "uint256"}],
     stateMutability: "view",
+    type: "function"
+  },
+  // 🌟 新增：用户 RWA Token 托管余额
+  {
+    inputs: [{"internalType": "address", "name": "", "type": "address"}],
+    name: "userTokenBalances",
+    outputs: [{"internalType": "uint256", "name": "", "type": "uint256"}],
+    stateMutability: "view",
+    type: "function"
+  },
+  // 🌟 新增：提取 RWA Token 到外部钱包
+  {
+    inputs: [{"internalType": "uint256", "name": "amount", "type": "uint256"}],
+    name: "withdrawTokens",
+    outputs: [],
+    stateMutability: "nonpayable",
     type: "function"
   },
   // --- 写入函数 ---

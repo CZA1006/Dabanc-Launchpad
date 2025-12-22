@@ -61,8 +61,10 @@ export interface BatchAuctionInterface extends Interface {
       | "transferOwnership"
       | "unpause"
       | "userBalances"
+      | "userTokenBalances"
       | "withdraw"
       | "withdrawProceeds"
+      | "withdrawTokens"
   ): FunctionFragment;
 
   getEvent(
@@ -78,6 +80,8 @@ export interface BatchAuctionInterface extends Interface {
       | "RoundStarted"
       | "SupplyAdjusted"
       | "TargetPriceUpdated"
+      | "TokensAllocated"
+      | "TokensWithdrawn"
       | "TotalSupplyUpdated"
       | "Unpaused"
       | "Withdraw"
@@ -212,12 +216,20 @@ export interface BatchAuctionInterface extends Interface {
     values: [AddressLike]
   ): string;
   encodeFunctionData(
+    functionFragment: "userTokenBalances",
+    values: [AddressLike]
+  ): string;
+  encodeFunctionData(
     functionFragment: "withdraw",
     values: [BigNumberish]
   ): string;
   encodeFunctionData(
     functionFragment: "withdrawProceeds",
     values?: undefined
+  ): string;
+  encodeFunctionData(
+    functionFragment: "withdrawTokens",
+    values: [BigNumberish]
   ): string;
 
   decodeFunctionResult(
@@ -342,9 +354,17 @@ export interface BatchAuctionInterface extends Interface {
     functionFragment: "userBalances",
     data: BytesLike
   ): Result;
+  decodeFunctionResult(
+    functionFragment: "userTokenBalances",
+    data: BytesLike
+  ): Result;
   decodeFunctionResult(functionFragment: "withdraw", data: BytesLike): Result;
   decodeFunctionResult(
     functionFragment: "withdrawProceeds",
+    data: BytesLike
+  ): Result;
+  decodeFunctionResult(
+    functionFragment: "withdrawTokens",
     data: BytesLike
   ): Result;
 }
@@ -503,6 +523,32 @@ export namespace TargetPriceUpdatedEvent {
   export type OutputTuple = [newTargetPrice: bigint];
   export interface OutputObject {
     newTargetPrice: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace TokensAllocatedEvent {
+  export type InputTuple = [user: AddressLike, amount: BigNumberish];
+  export type OutputTuple = [user: string, amount: bigint];
+  export interface OutputObject {
+    user: string;
+    amount: bigint;
+  }
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
+}
+
+export namespace TokensWithdrawnEvent {
+  export type InputTuple = [user: AddressLike, amount: BigNumberish];
+  export type OutputTuple = [user: string, amount: bigint];
+  export interface OutputObject {
+    user: string;
+    amount: bigint;
   }
   export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
   export type Filter = TypedDeferredTopicFilter<Event>;
@@ -719,9 +765,17 @@ export interface BatchAuction extends BaseContract {
 
   userBalances: TypedContractMethod<[arg0: AddressLike], [bigint], "view">;
 
+  userTokenBalances: TypedContractMethod<[arg0: AddressLike], [bigint], "view">;
+
   withdraw: TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
 
   withdrawProceeds: TypedContractMethod<[], [void], "nonpayable">;
+
+  withdrawTokens: TypedContractMethod<
+    [amount: BigNumberish],
+    [void],
+    "nonpayable"
+  >;
 
   getFunction<T extends ContractMethod = ContractMethod>(
     key: string | FunctionFragment
@@ -876,11 +930,17 @@ export interface BatchAuction extends BaseContract {
     nameOrSignature: "userBalances"
   ): TypedContractMethod<[arg0: AddressLike], [bigint], "view">;
   getFunction(
+    nameOrSignature: "userTokenBalances"
+  ): TypedContractMethod<[arg0: AddressLike], [bigint], "view">;
+  getFunction(
     nameOrSignature: "withdraw"
   ): TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
   getFunction(
     nameOrSignature: "withdrawProceeds"
   ): TypedContractMethod<[], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "withdrawTokens"
+  ): TypedContractMethod<[amount: BigNumberish], [void], "nonpayable">;
 
   getEvent(
     key: "Deposit"
@@ -958,6 +1018,20 @@ export interface BatchAuction extends BaseContract {
     TargetPriceUpdatedEvent.InputTuple,
     TargetPriceUpdatedEvent.OutputTuple,
     TargetPriceUpdatedEvent.OutputObject
+  >;
+  getEvent(
+    key: "TokensAllocated"
+  ): TypedContractEvent<
+    TokensAllocatedEvent.InputTuple,
+    TokensAllocatedEvent.OutputTuple,
+    TokensAllocatedEvent.OutputObject
+  >;
+  getEvent(
+    key: "TokensWithdrawn"
+  ): TypedContractEvent<
+    TokensWithdrawnEvent.InputTuple,
+    TokensWithdrawnEvent.OutputTuple,
+    TokensWithdrawnEvent.OutputObject
   >;
   getEvent(
     key: "TotalSupplyUpdated"
@@ -1101,6 +1175,28 @@ export interface BatchAuction extends BaseContract {
       TargetPriceUpdatedEvent.InputTuple,
       TargetPriceUpdatedEvent.OutputTuple,
       TargetPriceUpdatedEvent.OutputObject
+    >;
+
+    "TokensAllocated(address,uint256)": TypedContractEvent<
+      TokensAllocatedEvent.InputTuple,
+      TokensAllocatedEvent.OutputTuple,
+      TokensAllocatedEvent.OutputObject
+    >;
+    TokensAllocated: TypedContractEvent<
+      TokensAllocatedEvent.InputTuple,
+      TokensAllocatedEvent.OutputTuple,
+      TokensAllocatedEvent.OutputObject
+    >;
+
+    "TokensWithdrawn(address,uint256)": TypedContractEvent<
+      TokensWithdrawnEvent.InputTuple,
+      TokensWithdrawnEvent.OutputTuple,
+      TokensWithdrawnEvent.OutputObject
+    >;
+    TokensWithdrawn: TypedContractEvent<
+      TokensWithdrawnEvent.InputTuple,
+      TokensWithdrawnEvent.OutputTuple,
+      TokensWithdrawnEvent.OutputObject
     >;
 
     "TotalSupplyUpdated(uint256)": TypedContractEvent<

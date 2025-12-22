@@ -36,6 +36,16 @@ fi
 echo "✅ 环境变量检查通过"
 echo ""
 
+# 解决 macOS 遗留问题：清理 ._* 文件
+echo "🧹 Step 0: 清理 macOS 遗留文件..."
+find . -name '._*' -type f -delete 2>/dev/null || true
+
+# 检查依赖，解决 Hardhat HHE22 错误
+if [ ! -d "node_modules" ]; then
+    echo "📦 发现缺少依赖，正在自动安装..."
+    npm install
+fi
+
 # 编译合约
 echo "📦 Step 1: 编译智能合约..."
 npm run compile
@@ -96,6 +106,20 @@ rm -f .env.bak
 echo "✅ .env 文件已更新"
 echo ""
 
+# 更新前端常量文件
+echo "💻 Step 3.5: 更新前端 constants.ts..."
+FRONTEND_CONSTANTS="dabanc-frontend/src/constants.ts"
+if [ -f "$FRONTEND_CONSTANTS" ]; then
+    sed -i.bak "s|export const AUCTION_ADDRESS = \".*\"|export const AUCTION_ADDRESS = \"$AUCTION_ADDR\"|" "$FRONTEND_CONSTANTS"
+    sed -i.bak "s|export const USDC_ADDRESS = \".*\"|export const USDC_ADDRESS = \"$USDC_ADDR\"|" "$FRONTEND_CONSTANTS"
+    sed -i.bak "s|export const TOKEN_ADDRESS = \".*\"|export const TOKEN_ADDRESS = \"$TOKEN_ADDR\"|" "$FRONTEND_CONSTANTS"
+    rm -f "${FRONTEND_CONSTANTS}.bak"
+    echo "✅ 前端 constants.ts 已更新"
+else
+    echo "⚠️ 警告: 未找到前端配置文件 $FRONTEND_CONSTANTS，跳过更新"
+fi
+echo ""
+
 # 初始化数据库
 echo "💾 Step 4: 初始化数据库..."
 npx hardhat run scripts/setup_db.ts --network sepolia
@@ -117,10 +141,6 @@ echo "║                    🎉 部署完成！                              �
 echo "╠══════════════════════════════════════════════════════════════╣"
 echo "║  请将以下地址更新到前端 constants.ts:                        ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
-echo ""
-echo "export const AUCTION_ADDRESS = \"$AUCTION_ADDR\" as const;"
-echo "export const USDC_ADDRESS = \"$USDC_ADDR\" as const;"
-echo ""
 echo "📌 Etherscan 链接:"
 echo "   USDC:    https://sepolia.etherscan.io/address/$USDC_ADDR"
 echo "   wSPX:    https://sepolia.etherscan.io/address/$TOKEN_ADDR"

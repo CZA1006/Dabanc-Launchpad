@@ -43,8 +43,11 @@ contract BatchAuction is Ownable, ReentrancyGuard, Pausable {
     bool public isRoundActive;
     mapping(address => bool) public isWhitelisted;
 
-    // 🌟 新增：用户链上资金账户 (类似于交易所余额)
+    // 🌟 用户链上资金账户 (USDC 余额，类似于交易所余额)
     mapping(address => uint256) public userBalances;
+    
+    // 🌟 用户 RWA Token 托管账户 (用户可选择何时提取到私人钱包)
+    mapping(address => uint256) public userTokenBalances;
 
     struct RoundInfo {
         uint256 clearingPrice;
@@ -57,6 +60,8 @@ contract BatchAuction is Ownable, ReentrancyGuard, Pausable {
     // 事件优化
     event Deposit(address indexed user, uint256 amount);
     event Withdraw(address indexed user, uint256 amount);
+    event TokensAllocated(address indexed user, uint256 amount);  // 🌟 新增：Token 分配到托管账户
+    event TokensWithdrawn(address indexed user, uint256 amount);  // 🌟 新增：Token 提取到外部钱包
     event RoundCleared(uint256 indexed roundId, uint256 clearingPrice, uint256 totalVolume);
     event RoundStarted(uint256 indexed roundId, uint256 startTime);
     event GreenShoeActivated(uint256 amountLocked);
@@ -113,7 +118,7 @@ contract BatchAuction is Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
-     * @notice 提现：将未使用的 USDC 提回钱包
+     * @notice 提现 USDC：将未使用的 USDC 提回外部钱包
      */
     function withdraw(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be > 0");
@@ -126,6 +131,22 @@ contract BatchAuction is Ownable, ReentrancyGuard, Pausable {
         paymentCurrency.safeTransfer(msg.sender, amount);
         
         emit Withdraw(msg.sender, amount);
+    }
+
+    /**
+     * @notice 🌟 提取 RWA Token：将托管的 Token 提取到外部钱包 (MetaMask)
+     */
+    function withdrawTokens(uint256 amount) external nonReentrant {
+        require(amount > 0, "Amount must be > 0");
+        require(userTokenBalances[msg.sender] >= amount, "Insufficient token balance");
+
+        // 扣除托管余额
+        userTokenBalances[msg.sender] -= amount;
+        
+        // 将 Token 转到用户外部钱包
+        auctionToken.safeTransfer(msg.sender, amount);
+        
+        emit TokensWithdrawn(msg.sender, amount);
     }
 
     // ===== 核心业务 =====
@@ -164,13 +185,15 @@ contract BatchAuction is Ownable, ReentrancyGuard, Pausable {
 
             // 检查余额是否足够支付 (防止链下计算错误或用户恶意提前提现)
             if (userBalances[user] >= cost) {
-                // 1. 扣钱
+                // 1. 扣 USDC
                 userBalances[user] -= cost;
-                // 2. 发货
-                auctionToken.safeTransfer(user, tokens);
+                // 2. 🌟 将 Token 存入用户托管账户（不直接发到外部钱包）
+                userTokenBalances[user] += tokens;
                 
                 roundTotalCost += cost;
                 roundTotalTokens += tokens;
+                
+                emit TokensAllocated(user, tokens);
             } 
             // 如果余额不足，该用户本次交易失败，但不 revert 整个交易
         }
