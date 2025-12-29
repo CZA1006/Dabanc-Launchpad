@@ -1,8 +1,9 @@
 /**
- * Dabanc Launchpad - Ultimate v8.1 (Fixed & Enhanced)
- * 1. Fixed wSPX Deposit Logic 🔧
- * 2. New Spinner Animation 🌀
- * 3. Wallet Balance Display 🦊
+ * Dabanc Launchpad - Ultimate v10.0 (Price Chart + Auction Order Book)
+ * 1. Modern glass morphism UI 🔮
+ * 2. Price Curve Chart 📈
+ * 3. Auction-style Order Book (5 levels above/below clearing) 📊
+ * 4. All original functionality preserved ✅
  */
 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
@@ -15,11 +16,37 @@ import {
 } from 'wagmi';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { parseEther, formatEther } from 'viem';
+import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
+import { format } from 'date-fns';
+import { 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  Tooltip, 
+  ResponsiveContainer,
+  CartesianGrid,
+  ReferenceLine
+} from 'recharts';
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  BarChart3, 
+  Clock, 
+  Flame,
+  Wallet,
+  ArrowDownUp,
+  Zap,
+  Activity,
+  CheckCircle2,
+  AlertCircle,
+  X
+} from 'lucide-react';
 import { 
   AUCTION_ADDRESS, 
   USDC_ADDRESS, 
-  TOKEN_ADDRESS, // ⚠️ 请确保 constants.ts 里导出了这个
+  TOKEN_ADDRESS,
   AUCTION_ABI, 
   USDC_ABI, 
   PROJECT_CONFIG,
@@ -35,12 +62,23 @@ interface Bid {
   timestamp: number;
 }
 
+interface PricePoint {
+  timestamp: number;
+  price: number;
+  volume: number;
+  roundId: number;
+}
+
+type ChartViewMode = 'all' | 'current' | number; // 'all' = all rounds, 'current' = current round, number = specific past round
+
 // 🔧 Config: Limits kept high for testing
 const MAX_SINGLE_ORDER_PERCENT = 5.0; 
 const MAX_PER_USER_PERCENT = 100.0; 
 
 export default function App() {
   const { address, isConnected } = useAccount();
+  console.log("🚀 App Rendering, isConnected:", isConnected, "Address:", address);
+  console.log("🌐 ACTIVE_NETWORK:", PROJECT_CONFIG.network, "AUCTION_ADDRESS:", AUCTION_ADDRESS);
   
   const [orderType, setOrderType] = useState<'limit' | 'market'>('limit');
   const [selectedAsset, setSelectedAsset] = useState<'USDC' | 'wSPX'>('USDC');
@@ -52,12 +90,17 @@ export default function App() {
   const [txError, setTxError] = useState<string | null>(null);
   const [, setStep] = useState<string>('idle');
   
+  // 🌟 Price History for Chart
+  const [priceHistory, setPriceHistory] = useState<PricePoint[]>([]);
+  const [chartViewMode, setChartViewMode] = useState<ChartViewMode>('current');
+  
   // 🌟 Settlement State
   const [showResult, setShowResult] = useState(false);
   const [lastAllocated, setLastAllocated] = useState({ amount: 0, price: 0, roundId: 0 });
   
   const prevTokenBalance = useRef<bigint>(0n);
   const prevRoundId = useRef<number>(0);
+  const lastPriceRef = useRef<number>(10.0);
 
   const { writeContract, data: hash, isPending, reset, error: writeError } = useWriteContract();
   const { isSuccess: isConfirmed } = useWaitForTransactionReceipt({ hash });
@@ -104,7 +147,9 @@ export default function App() {
   });
 
   const isSettling = useMemo(() => {
-    return !isRoundActive && timeLeft <= 0;
+    // 只有当明确读到 isRoundActive 为 false，且倒计时确实为 0 时才显示结算中
+    // 这样加载中 (undefined) 的时候就不会显示遮罩层
+    return isRoundActive === false && timeLeft <= 0;
   }, [isRoundActive, timeLeft]);
 
   // === Effects ===
@@ -124,21 +169,29 @@ export default function App() {
   }, [contractTokenBalance]);
 
   useEffect(() => {
-    if (currentRoundId) {
+    if (currentRoundId && prevRoundId.current !== Number(currentRoundId)) {
+      // 轮次变化时，清空旧数据
+      console.log(`🔄 Round changed from ${prevRoundId.current} to ${Number(currentRoundId)}, clearing old data`);
+      setRealBids([]);
+      setPriceHistory(prev => prev.filter(p => p.roundId !== prevRoundId.current));
       prevRoundId.current = Number(currentRoundId);
     }
   }, [currentRoundId]);
 
   useEffect(() => {
     if (!currentRoundId) return;
+    console.log("🔍 Fetching order book for Round:", Number(currentRoundId));
     const fetchOrderBook = async () => {
       try {
         const res = await axios.get(`${API_URL}/api/orders?roundId=${currentRoundId}`);
+        console.log(`📊 Received ${res.data?.length || 0} orders from API`);
         if (res.data && Array.isArray(res.data)) setRealBids(res.data);
-      } catch (e) {}
+      } catch (e) {
+        console.error("❌ Failed to fetch order book:", e);
+      }
     };
     fetchOrderBook(); 
-    const interval = setInterval(fetchOrderBook, 1000); 
+    const interval = setInterval(fetchOrderBook, 2000); 
     return () => clearInterval(interval);
   }, [currentRoundId]);
 
@@ -191,11 +244,13 @@ export default function App() {
     if (accumulated < SUPPLY && sorted.length > 0) price = sorted[sorted.length - 1].limitPrice;
     price = Math.max(0.01, price);
 
+    // 用2位小数精度进行价格分组整合
     const priceGroups: Record<string, { tokens: number; usdc: number }> = {};
     sorted.forEach(bid => {
       if (!bid || bid.limitPrice === null || bid.limitPrice === undefined) return;
       
-      const priceKey = Number(bid.limitPrice).toFixed(4);
+      // 使用2位小数精度进行分组
+      const priceKey = Number(bid.limitPrice).toFixed(2);
       if (!priceGroups[priceKey]) priceGroups[priceKey] = { tokens: 0, usdc: 0 };
       
       const safePrice = bid.limitPrice > 0 ? bid.limitPrice : 0.0001;
@@ -229,6 +284,98 @@ export default function App() {
     };
   }, [realBids, address]);
 
+  // 📈 Update price history when clearing price changes
+  useEffect(() => {
+    if (clearingPrice && currentRoundId) {
+      const roundNum = Number(currentRoundId);
+      const shouldUpdate = clearingPrice !== lastPriceRef.current ||
+                          !priceHistory.some(p => p.roundId === roundNum);
+
+      if (shouldUpdate) {
+        lastPriceRef.current = clearingPrice;
+        setPriceHistory(prev => {
+          const newPoint: PricePoint = {
+            timestamp: Date.now(),
+            price: clearingPrice,
+            volume: stats.volume,
+            roundId: roundNum
+          };
+          const updated = [...prev, newPoint];
+          // Keep last 500 points (to store multiple rounds)
+          return updated.slice(-500);
+        });
+      }
+    }
+  }, [clearingPrice, stats.volume, currentRoundId, priceHistory]);
+
+  // 📊 Get available rounds from price history
+  const availableRounds = useMemo(() => {
+    const rounds = [...new Set(priceHistory.map(p => p.roundId))].sort((a, b) => b - a);
+    return rounds;
+  }, [priceHistory]);
+
+  // 📊 Filter chart data based on view mode
+  const filteredPriceHistory = useMemo(() => {
+    const currentRound = currentRoundId ? Number(currentRoundId) : 0;
+    
+    if (chartViewMode === 'all') {
+      return priceHistory;
+    } else if (chartViewMode === 'current') {
+      return priceHistory.filter(p => p.roundId === currentRound);
+    } else {
+      // Specific past round
+      return priceHistory.filter(p => p.roundId === chartViewMode);
+    }
+  }, [priceHistory, chartViewMode, currentRoundId]);
+
+  // 📊 Generate 5 levels above and below clearing price (基于2位小数精度整合后的数据)
+  // 注意：清算价格是基于完整订单簿计算的，这里只是显示最接近的5档
+  const auctionOrderBook = useMemo(() => {
+    // 清算价格取整到2位小数
+    const clearingPrice2d = Math.round(clearingPrice * 100) / 100;
+    
+    // 获取高于清算价格的订单（按价格从低到高排序，取最接近的5档）
+    const aboveClearing = orderBookRows
+      .filter(r => r.price > clearingPrice2d)
+      .sort((a, b) => a.price - b.price) // 升序，最接近清算价格的在前
+      .slice(0, 5)
+      .reverse(); // 反转，最高的在上面
+
+    // 清算价格档位
+    const atClearing = orderBookRows.filter(r => Math.abs(r.price - clearingPrice2d) < 0.005);
+
+    // 获取低于清算价格的订单（按价格从高到低排序，取最接近的5档）
+    const belowClearing = orderBookRows
+      .filter(r => r.price < clearingPrice2d)
+      .sort((a, b) => b.price - a.price) // 降序，最接近清算价格的在前
+      .slice(0, 5);
+
+    // Calculate cumulative amounts
+    let cumulativeAbove = 0;
+    const aboveWithCumulative = aboveClearing.map(row => {
+      cumulativeAbove += row.tokens;
+      return { ...row, cumulative: cumulativeAbove };
+    });
+
+    let cumulativeBelow = 0;
+    const belowWithCumulative = belowClearing.map(row => {
+      cumulativeBelow += row.tokens;
+      return { ...row, cumulative: cumulativeBelow };
+    });
+
+    const maxCumulative = Math.max(
+      ...aboveWithCumulative.map(r => r.cumulative),
+      ...belowWithCumulative.map(r => r.cumulative),
+      1
+    );
+
+    return {
+      above: aboveWithCumulative.map(r => ({ ...r, percent: (r.cumulative / maxCumulative) * 100 })),
+      at: atClearing,
+      below: belowWithCumulative.map(r => ({ ...r, percent: (r.cumulative / maxCumulative) * 100 })),
+    };
+  }, [orderBookRows, clearingPrice]);
+
   const { totalCost, orderWarning, maxSingleOrder } = useMemo(() => {
     const SUPPLY = PROJECT_CONFIG.supplyPerRound;
     const requestedTokens = parseFloat(amount) || 0;
@@ -241,20 +388,16 @@ export default function App() {
     const effectiveMax = Math.min(maxSingle, userRemaining);
     
     let warning = null;
-    let estimated = requestedTokens;
     
     if (requestedTokens > maxSingle) {
       warning = `Max per order: ${formatters.amount(maxSingle)} wSPX`;
-      estimated = maxSingle;
     } else if (requestedTokens > userRemaining && userRemaining < maxSingle) {
       warning = `Remaining quota: ${formatters.amount(userRemaining)} wSPX`;
-      estimated = userRemaining;
     }
     
     return { totalCost: cost, orderWarning: warning, maxSingleOrder: effectiveMax };
   }, [amount, limitPrice, orderType, clearingPrice, userCurrentOrders, totalDemand]);
 
-  // 🔧 FIX: Corrected Approval Logic
   const needsApproval = useMemo(() => {
     if (!depositAmount || parseFloat(depositAmount) <= 0) return false;
     
@@ -262,13 +405,11 @@ export default function App() {
       if (!usdcAllowance) return true;
       return Number(formatEther(usdcAllowance)) < parseFloat(depositAmount);
     } else {
-      // wSPX Case
       if (!tokenAllowance) return true;
       return Number(formatEther(tokenAllowance)) < parseFloat(depositAmount);
     }
   }, [usdcAllowance, tokenAllowance, depositAmount, selectedAsset]);
 
-  // 🔧 FIX: Corrected Deposit Logic
   const handleDeposit = () => {
     if (!depositAmount || parseFloat(depositAmount) <= 0 || isSettling) return;
     setTxError(null);
@@ -351,482 +492,918 @@ export default function App() {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  return (
-    <div className="app">
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
-        
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        
-        .app {
-          min-height: 100vh;
-          color: #f0f6fc;
-          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-          font-size: 14px; 
-          background: radial-gradient(circle at 50% 10%, #1c2128 0%, #0d1117 100%);
-          background-size: 200% 200%;
-          animation: bgPulse 20s ease infinite alternate;
-        }
-        @keyframes bgPulse {
-          0% { background-position: 50% 0%; }
-          100% { background-position: 50% 100%; }
-        }
+  const isUrgent = timeLeft < 60;
+  const progressPercent = ((PROJECT_CONFIG.roundDuration - timeLeft) / PROJECT_CONFIG.roundDuration) * 100;
 
-        .container { max-width: 1400px; margin: 0 auto; padding: 16px 20px; position: relative; }
-        
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; } 
-        .logo { display: flex; align-items: center; gap: 12px; }
-        .logo-icon { width: 40px; height: 40px; background: linear-gradient(135deg, #a855f7, #7c3aed); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 700; color: white; font-size: 18px; box-shadow: 0 0 20px rgba(168, 85, 247, 0.4); }
-        .logo-text { font-size: 20px; font-weight: 700; color: white; }
-        
-        .card { 
-          background: rgba(22, 27, 34, 0.75); 
-          backdrop-filter: blur(12px);
-          border: 1px solid rgba(48, 54, 61, 0.6); 
-          border-radius: 16px; 
-          overflow: hidden; 
-          height: 100%; 
-          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-          transition: transform 0.2s, border-color 0.2s;
-        }
-        .card:hover { border-color: #58a6ff; }
+  // Chart data - use filtered data based on view mode
+  const chartData = filteredPriceHistory.map((point) => ({
+    ...point,
+    time: format(new Date(point.timestamp), "HH:mm:ss"),
+    fullTime: format(new Date(point.timestamp), "MM/dd HH:mm:ss"),
+  }));
 
-        .price-section { 
-          display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 20px; align-items: center;
-          padding: 20px 28px; 
-          background: rgba(13, 17, 23, 0.8); backdrop-filter: blur(10px);
-          border-radius: 16px; border: 1px solid #30363d; margin-bottom: 24px; 
-          box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-        }
-        
-        .main-price { font-family: 'JetBrains Mono', monospace; font-size: 40px; font-weight: 700; color: #3fb950; text-shadow: 0 0 15px rgba(63, 185, 80, 0.3); }
-        
-        .stats-group { display: flex; justify-content: space-around; gap: 20px; }
-        .stat-item { display: flex; flex-direction: column; align-items: center; }
-        .stat-label { font-size: 16px; color: #8b949e; text-transform: uppercase; margin-bottom: 6px; font-weight: 800; letter-spacing: 0.5px; } 
-        .stat-val { font-family: 'JetBrains Mono', monospace; font-size: 25px; font-weight: 800; color: #f0f6fc; } 
-        
-        .status-area { text-align: right; }
-        .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; background: rgba(63, 185, 80, 0.1); border: 1px solid rgba(63, 185, 80, 0.4); border-radius: 20px; font-size: 12px; color: #3fb950; font-weight: 600; box-shadow: 0 0 10px rgba(63, 185, 80, 0.1); }
-        .status-dot { width: 6px; height: 6px; background: #3fb950; border-radius: 50%; animation: pulse 2s infinite; }
-        
-        .layout-top { display: grid; grid-template-columns: 1fr 380px; gap: 20px; margin-bottom: 20px; }
-        .layout-bottom { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+  const minPrice = chartData.length > 0 ? Math.min(...chartData.map(d => d.price)) * 0.995 : clearingPrice * 0.9;
+  const maxPrice = chartData.length > 0 ? Math.max(...chartData.map(d => d.price)) * 1.005 : clearingPrice * 1.1;
 
-        .card-head { padding: 16px 20px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); }
-        .card-title { font-size: 14px; font-weight: 700; color: #f0f6fc; text-transform: uppercase; letter-spacing: 0.8px; display: flex; align-items: center; gap: 8px; }
-        .card-body { padding: 16px; display: flex; flex-direction: column; justify-content: center; height: calc(100% - 53px); }
-        
-        .ob-header {
-            display: grid;
-            grid-template-columns: 100px 1fr 90px 90px;
-            gap: 12px;
-            padding: 0 0 10px 0;
-            border-bottom: 1px solid #30363d;
-            margin-bottom: 10px;
-            font-size: 11px;
-            color: #8b949e;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .ob-scroll { max-height: 340px; overflow-y: auto; }
-        .ob-scroll::-webkit-scrollbar { width: 4px; }
-        .ob-scroll::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
-        
-        .ob-row { display: grid; grid-template-columns: 100px 1fr 90px 90px; gap: 12px; padding: 7px 0; font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; transition: background 0.15s; }
-        .ob-row:hover { background: rgba(255,255,255,0.04); }
-        .ob-price { font-weight: 700; font-size: 14px; }
-        
-        .clearing-line { padding: 12px 0; border-top: 1px dashed rgba(248, 81, 73, 0.5); border-bottom: 1px dashed rgba(248, 81, 73, 0.5); margin: 12px 0; background: rgba(248, 81, 73, 0.08); }
-        .clearing-price-big { font-size: 20px; font-weight: 700; color: #f85149; text-align: center; display: block; }
-        .clearing-tag { font-size: 11px; color: #f85149; text-align: center; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
-        
-        /* 🚀 Updated Settling Animation (Spinner) */
-        .settling-overlay { 
-          position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(16px); 
-          display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 999; 
-          animation: zoomIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-        @keyframes zoomIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
-        
-        .settling-card {
-            background: #0d1117; border: 1px solid #a855f7; border-radius: 24px; padding: 56px 48px; 
-            width: 460px; text-align: center; box-shadow: 0 0 80px rgba(168, 85, 247, 0.2);
-            position: relative; overflow: hidden;
-        }
-
-        .settling-spinner {
-            width: 48px; height: 48px;
-            border: 4px solid rgba(168, 85, 247, 0.2); 
-            border-top: 4px solid #a855f7;             
-            border-radius: 50%;
-            margin: 0 auto 32px;                       
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-        .settling-logo { 
-          width: 80px; height: 80px; background: #a855f7; border-radius: 20px; margin: 0 auto 24px;
-          display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 800; color: white; 
-          box-shadow: 0 0 30px rgba(168, 85, 247, 0.5);
-          animation: pulse-logo 2s infinite;
-        }
-        @keyframes pulse-logo { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
-        
-        .settling-text { font-size: 24px; font-weight: 700; color: white; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
-        .settling-sub { font-size: 14px; color: #a855f7; margin-bottom: 32px; font-family: 'JetBrains Mono', monospace; }
-
-        /* Timer Box */
-        .timer-box { text-align: center; padding: 24px 20px; background: rgba(168, 85, 247, 0.05); border-radius: 12px; border: 1px solid rgba(168, 85, 247, 0.3); box-shadow: inset 0 0 20px rgba(168, 85, 247, 0.05); }
-        .timer-label { font-size: 13px; font-weight: 700; color: #a855f7; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
-        .timer-num { font-family: 'JetBrains Mono', monospace; font-size: 52px; font-weight: 700; color: #f0f6fc; line-height: 1; text-shadow: 0 0 20px rgba(168, 85, 247, 0.3); }
-        .timer-num.urgent { color: #f85149; text-shadow: 0 0 20px rgba(248, 81, 73, 0.3); }
-        .timer-bar { height: 6px; background: #30363d; border-radius: 3px; margin-top: 16px; overflow: hidden; }
-        .timer-bar-fill { height: 100%; background: linear-gradient(90deg, #a855f7, #7c3aed); border-radius: 3px; transition: width 1s linear; box-shadow: 0 0 10px #a855f7; }
-        
-        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(10px); animation: fadeIn 0.3s ease; }
-        .modal-card { background: #0d1117; border: 1px solid #3fb950; border-radius: 20px; padding: 40px; width: 420px; text-align: center; box-shadow: 0 0 60px rgba(63, 185, 80, 0.2); }
-        .modal-title { font-size: 24px; font-weight: 700; margin-bottom: 10px; color: #3fb950; text-transform: uppercase; letter-spacing: 1px; }
-        .modal-val { font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 700; color: #f0f6fc; margin: 12px 0; }
-        .modal-btn { background: #3fb950; color: white; border: none; padding: 14px; border-radius: 10px; font-weight: 700; font-size: 15px; cursor: pointer; margin-top: 28px; width: 100%; transition: 0.2s; box-shadow: 0 4px 12px rgba(63, 185, 80, 0.3); }
-        .modal-btn:hover { background: #2ea043; transform: translateY(-1px); }
-        
-        /* Inputs & Buttons */
-        .input-group { background: #0d1117; border: 1px solid #30363d; border-radius: 10px; padding: 12px 14px; display: flex; align-items: center; margin-bottom: 12px; transition: border 0.2s; }
-        .input-group:focus-within { border-color: #58a6ff; box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2); }
-        .input-group.disabled { background: #161b22; border-color: #21262d; opacity: 0.6; }
-        .input-group input { flex: 1; background: none; border: none; color: white; font-size: 16px; font-family: 'JetBrains Mono', monospace; font-weight: 600; outline: none; }
-        .input-group input:disabled { cursor: not-allowed; color: #8b949e; }
-        .input-suffix { color: #8b949e; font-size: 13px; margin-left: 10px; font-weight: 600; }
-        
-        .btn-row { display: flex; gap: 10px; margin-bottom: 14px; }
-        .btn { flex: 1; padding: 12px; border: none; border-radius: 10px; font-weight: 600; font-size: 14px; cursor: pointer; transition: 0.2s; }
-        .btn-primary { background: linear-gradient(135deg, #238636, #2ea043); color: white; box-shadow: 0 2px 8px rgba(35, 134, 54, 0.3); }
-        .btn-primary:hover { filter: brightness(1.1); }
-        .btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
-        .btn-secondary:hover { background: #30363d; }
-        
-        .bal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-        .bal-box { background: #0d1117; padding: 14px; border-radius: 10px; border: 1px solid #30363d; }
-        .bal-label { font-size: 11px; color: #8b949e; text-transform: uppercase; margin-bottom: 6px; font-weight: 700; }
-        .bal-val { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; color: #f0f6fc; }
-        
-        .pct-btns { display: flex; gap: 8px; margin-bottom: 16px; }
-        .pct-btn { flex: 1; padding: 8px; background: #21262d; border: 1px solid #30363d; border-radius: 8px; color: #8b949e; font-size: 12px; font-weight: 600; cursor: pointer; transition: 0.15s; }
-        .pct-btn:hover { border-color: #58a6ff; color: #58a6ff; background: rgba(88, 166, 255, 0.1); }
-        
-        .total-box { background: #0d1117; padding: 14px; border-radius: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #30363d; }
-        .total-label { color: #8b949e; font-size: 13px; font-weight: 600; }
-        .total-val { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 700; color: #f0f6fc; }
-        
-        .warning-msg { padding: 10px 12px; background: rgba(227, 179, 65, 0.1); border: 1px solid rgba(227, 179, 65, 0.3); border-radius: 8px; color: #e3b341; font-size: 13px; margin-bottom: 12px; }
-        .error-msg { padding: 10px 12px; background: rgba(248, 81, 73, 0.1); border: 1px solid rgba(248, 81, 73, 0.3); border-radius: 8px; color: #f85149; font-size: 13px; margin-bottom: 12px; }
-        
-        .order-btn { width: 100%; padding: 16px; background: linear-gradient(135deg, #238636, #2ea043); border: none; border-radius: 12px; color: white; font-size: 16px; font-weight: 700; cursor: pointer; transition: 0.2s; box-shadow: 0 4px 15px rgba(35, 134, 54, 0.4); text-transform: uppercase; letter-spacing: 0.5px; }
-        .order-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(35, 134, 54, 0.5); }
-        .order-btn:disabled { background: #21262d; color: #484f58; transform: none; box-shadow: none; cursor: not-allowed; border: 1px solid #30363d; }
-        
-        .mint-link { display: block; text-align: center; margin-top: 12px; font-size: 12px; color: #58a6ff; cursor: pointer; transition: 0.2s; }
-        .mint-link:hover { color: #79c0ff; text-decoration: underline; }
-
-        .stats-list { display: flex; flex-direction: column; gap: 12px; }
-        .stats-row { display: flex; justify-content: space-between; padding: 18px 0; border-bottom: 1px solid #21262d; }
-        .stats-row:last-child { border-bottom: none; }
-        .stats-row-label { color: #8b949e; font-size: 15px; font-weight: 700; }
-        .stats-row-val { font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 800; color: #f0f6fc; }
-        
-        .tab-row { display: flex; background: #0d1117; padding: 4px; border-radius: 12px; margin-bottom: 16px; border: 1px solid #30363d; }
-        .tab { flex: 1; padding: 10px; border: none; border-radius: 8px; background: none; color: #8b949e; font-weight: 600; font-size: 13px; cursor: pointer; transition: 0.2s; }
-        .tab.active { background: #21262d; color: #f0f6fc; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
-        
-        .connect-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 50vh; gap: 16px; }
-      `}</style>
-
-      {/* 🚀 Settlement Popup Overlay (Clean Spinner Version) */}
-      {isSettling && !showResult && (
-        <div className="settling-overlay">
-          <div className="settling-card">
-            <div className="settling-logo">⚡️</div>
-            <div className="settling-text">Settlement in Progress</div>
-            <div className="settling-sub">Executing smart contract clearing logic...</div>
-            <div className="settling-spinner"></div>
-          </div>
+  // Custom tooltip for chart
+  const CustomTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="glass-card p-3 text-sm">
+          <p className="text-surface-400 text-xs">{payload[0].payload.fullTime}</p>
+          <p className="font-mono font-semibold text-accent-green">
+            ${payload[0].value.toFixed(4)}
+          </p>
+          <p className="text-surface-500 text-xs">
+            Round #{payload[0].payload.roundId}
+          </p>
         </div>
-      )}
+      );
+    }
+    return null;
+  };
+
+  return (
+    <div className="min-h-screen">
+      {/* 🚀 Settlement Popup Overlay */}
+      <AnimatePresence>
+        {isSettling && !showResult && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="overlay"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="modal-card text-center animate-glow"
+            >
+              <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-primary-500 to-primary-700 rounded-2xl flex items-center justify-center text-4xl shadow-xl shadow-primary-500/30">
+                ⚡️
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2 uppercase tracking-wide">Settlement in Progress</h2>
+              <p className="text-primary-400 font-mono text-sm mb-8">Executing smart contract clearing logic...</p>
+              <div className="spinner mx-auto"></div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* 🌟 Result Modal */}
-      {showResult && (
-        <div className="modal-overlay">
-          <div className="modal-card">
-            <div className="modal-title">🎉 Settlement Complete</div>
-            <p style={{color: '#8b949e', fontSize: '13px'}}>Results for Round #{lastAllocated.roundId}</p>
-            <div style={{margin: '24px 0'}}>
-              <div style={{fontSize: '12px', color: '#8b949e', textTransform: 'uppercase'}}>You Received</div>
-              <div className="modal-val">{lastAllocated.amount.toFixed(2)} wSPX</div>
-              <div style={{fontSize: '12px', color: '#8b949e', marginTop: '16px', textTransform: 'uppercase'}}>Avg. Price</div>
-              <div className="modal-val" style={{color: '#3fb950'}}>${lastAllocated.price.toFixed(4)}</div>
-            </div>
-            <button className="modal-btn" onClick={() => setShowResult(false)}>Awesome!</button>
+      <AnimatePresence>
+        {showResult && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="overlay"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="modal-card border-accent-green/30"
+            >
+              <div className="text-center">
+                <div className="w-16 h-16 mx-auto mb-4 bg-accent-green/20 rounded-full flex items-center justify-center">
+                  <CheckCircle2 className="w-8 h-8 text-accent-green" />
+                </div>
+                <h2 className="text-2xl font-bold text-accent-green mb-2">Settlement Complete</h2>
+                <p className="text-surface-400 text-sm">Results for Round #{lastAllocated.roundId}</p>
+                
+                <div className="my-8 space-y-4">
+                  <div>
+                    <div className="stat-label">You Received</div>
+                    <div className="text-3xl font-mono font-bold text-white">{lastAllocated.amount.toFixed(2)} wSPX</div>
+                  </div>
+                  <div>
+                    <div className="stat-label">Avg. Price</div>
+                    <div className="text-3xl font-mono font-bold text-accent-green">${lastAllocated.price.toFixed(4)}</div>
+                  </div>
+                </div>
+                
+                <button 
+                  onClick={() => setShowResult(false)}
+                  className="btn-success w-full py-4 text-lg"
+                >
+                  Awesome!
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Header */}
+      <header className="border-b border-surface-800/50 bg-surface-950/80 backdrop-blur-xl sticky top-0 z-40">
+        <div className="container mx-auto px-4">
+          <div className="flex items-center justify-between h-16">
+            <motion.div 
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="flex items-center gap-3"
+            >
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-xl font-bold shadow-lg shadow-primary-500/30">
+                D
+              </div>
+              <div>
+                <h1 className="font-display font-bold text-lg">Dabanc</h1>
+                <p className="text-xs text-surface-400">Next-Gen RWA Launchpad</p>
+              </div>
+            </motion.div>
+
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="hidden md:flex items-center gap-4"
+            >
+              <div className="glass-button px-4 py-2 flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center text-xs font-bold">
+                    W
+                  </div>
+                  <span className="font-semibold">wSPX</span>
+                </div>
+                <span className="text-surface-500">/</span>
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center text-xs font-bold">
+                    $
+                  </div>
+                  <span className="font-semibold">USDC</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-sm">
+                <div className={`w-2 h-2 rounded-full ${isRoundActive ? 'bg-accent-green animate-pulse' : 'bg-accent-red'}`} />
+                <span className="text-surface-400">
+                  {isRoundActive ? 'Live' : 'Settling'}
+                </span>
+              </div>
+            </motion.div>
+
+            <motion.div 
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+            >
+              <ConnectButton />
+            </motion.div>
           </div>
         </div>
-      )}
+      </header>
 
-      <div className="container">
-        <header className="header">
-          <div className="logo">
-            <div className="logo-icon">D</div>
-            <div>
-              <div className="logo-text">Dabanc</div>
-              <div style={{fontSize: '11px', color: '#8b949e'}}>Next-Gen RWA Launchpad</div>
-            </div>
-          </div>
-          <ConnectButton />
-        </header>
+      <div className="container mx-auto px-4 py-6 space-y-6">
+        {/* Market Info & Countdown */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+        >
+          {/* Market Info */}
+          <div className="lg:col-span-2 glass-card p-6 flex flex-col h-full justify-center">
+            <div className="flex flex-wrap items-center justify-center gap-8">
+              <div className="flex-1 min-w-[200px]">
+                <div className="flex items-baseline gap-3">
+                  <AnimatePresence mode="wait">
+                    <motion.span
+                      key={clearingPrice}
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 10 }}
+                      className="text-4xl font-display font-bold tabular-nums text-accent-green"
+                    >
+                      ${formatters.price(clearingPrice)}
+                    </motion.span>
+                  </AnimatePresence>
+                  <span className="flex items-center gap-1 text-sm font-semibold px-2 py-1 rounded-lg bg-accent-green/20 text-accent-green">
+                    <TrendingUp size={14} />
+                    Est. Price
+                  </span>
+                </div>
+                <p className="text-surface-400 text-sm mt-1">wSPX / USDC</p>
+              </div>
 
-        {/* 🌟 Price Section */}
-        <div className="price-section">
-          <div>
-            <div style={{fontSize: '12px', color: '#8b949e', marginBottom: '6px', fontWeight: 600}}>EST. CLEARING PRICE</div>
-            <div className="main-price">${formatters.price(clearingPrice)}</div>
-            <div style={{fontSize: '12px', color: '#8b949e', marginTop: '4px'}}>wSPX / USDC</div>
+              <div className="flex flex-wrap gap-6">
+                <div className="text-center">
+                  <div className="flex items-center gap-1 text-surface-400 text-xs mb-1">
+                    <TrendingUp size={12} />
+                    24h High
+                  </div>
+                  <p className="font-mono font-semibold text-accent-green">
+                    ${formatters.price(stats.high || clearingPrice)}
+                  </p>
+                </div>
+
+                <div className="text-center">
+                  <div className="flex items-center gap-1 text-surface-400 text-xs mb-1">
+                    <TrendingDown size={12} />
+                    24h Low
+                  </div>
+                  <p className="font-mono font-semibold text-accent-red">
+                    ${formatters.price(stats.low || clearingPrice)}
+                  </p>
+                </div>
+
+                <div className="text-center">
+                  <div className="flex items-center gap-1 text-surface-400 text-xs mb-1">
+                    <BarChart3 size={12} />
+                    Volume
           </div>
-          
-          <div className="stats-group">
-            <div className="stat-item">
-              <span className="stat-label">24H High</span>
-              <span className="stat-val" style={{color: '#3fb950'}}>${formatters.price(stats.high || clearingPrice)}</span>
+                  <p className="font-mono font-semibold text-accent-blue">
+                    ${formatters.amount(stats.volume)}
+                  </p>
+        </div>
+
+                <div className="text-center">
+                  <div className="flex items-center gap-1 text-surface-400 text-xs mb-1">
+                    <Activity size={12} />
+                    Round
             </div>
-            <div className="stat-item">
-              <span className="stat-label">24H Low</span>
-              <span className="stat-val" style={{color: '#f85149'}}>${formatters.price(stats.low || clearingPrice)}</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-label">Volume</span>
-              <span className="stat-val" style={{color: '#58a6ff'}}>${formatters.amount(stats.volume)}</span>
-            </div>
-          </div>
-          
-          <div className="status-area">
-            <div className="status-badge">
-              <span className="status-dot"></span>
-              LIVE
-            </div>
-            <div style={{fontSize: '11px', color: '#8b949e', marginTop: '8px', fontWeight: 600}}>Round #{currentRoundId?.toString() || '1'}</div>
+                  <p className="font-semibold text-white">
+                    #{currentRoundId?.toString() || '1'}
+                  </p>
           </div>
         </div>
+            </div>
+          </div>
+
+          {/* Auction Countdown */}
+          <div className={`glass-card p-6 relative overflow-hidden ${isUrgent ? 'border-accent-red/50' : ''}`}>
+            <div 
+              className={`absolute inset-0 opacity-10 ${isUrgent ? 'bg-accent-red' : 'bg-primary-500'}`}
+              style={{ clipPath: `inset(0 ${100 - progressPercent}% 0 0)` }}
+            />
+          
+            <div className="flex items-center justify-between mb-4 relative">
+              <div className="flex items-center gap-2">
+                {isUrgent ? (
+                  <Flame className="text-accent-red animate-pulse" size={20} />
+                ) : (
+                  <Clock className="text-primary-400" size={20} />
+                )}
+                <h3 className="font-semibold">Round Ends In</h3>
+            </div>
+              <div className={`badge ${isUrgent ? 'badge-danger' : 'badge-info'}`}>
+                {isUrgent ? '🔥 Ending Soon!' : '⏳ Active'}
+            </div>
+            </div>
+
+            <div className="flex items-center justify-center gap-2 relative">
+              <motion.div 
+                key={`time-${timeLeft}`}
+                initial={{ scale: 1.1, opacity: 0.5 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="text-center"
+              >
+                <div className={`text-5xl font-display font-bold tabular-nums ${isUrgent ? 'text-accent-red' : 'text-white'}`}>
+                  {formatTime(timeLeft)}
+                </div>
+              </motion.div>
+          </div>
+          
+            <div className="mt-4 relative">
+              <div className="progress-bar">
+                <motion.div
+                  className={`progress-fill ${isUrgent ? 'bg-gradient-to-r from-accent-red to-orange-500' : 'bg-gradient-to-r from-primary-600 to-primary-400'}`}
+                  initial={{ width: '0%' }}
+                  animate={{ width: `${progressPercent}%` }}
+                  transition={{ duration: 0.5 }}
+                />
+            </div>
+          </div>
+        </div>
+        </motion.div>
 
         {isConnected ? (
           <>
-            {/* 🌟 Layout Top: Order Book + Timer */}
-            <div className="layout-top" style={{filter: isSettling ? 'blur(10px)' : 'none', pointerEvents: isSettling ? 'none' : 'auto', transition: 'filter 0.5s'}}>
-              <div className="card">
-                <div className="card-head"><span className="card-title">📊 Order Book</span></div>
+            {/* Main Trading Interface - Price Chart + Order Book */}
+            <div className={`grid grid-cols-1 xl:grid-cols-12 gap-6 transition-all duration-500 ${isSettling ? 'blur-sm pointer-events-none' : ''}`}>
+              {/* 📈 Price Chart */}
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="xl:col-span-8 glass-card"
+              >
+                <div className="card-header">
+                  <h2 className="card-title">
+                    <span className="text-primary-400">📈</span> Clearing Price Chart
+                  </h2>
+                  <div className="text-sm text-surface-500">
+                    {chartData.length} data points
+                  </div>
+                </div>
+                {/* Chart View Mode Selector */}
+                <div className="px-4 py-2 border-b border-surface-800/50 flex items-center gap-3 flex-wrap">
+                  <span className="text-xs text-surface-500 font-semibold">View:</span>
+                  <div className="flex gap-2 flex-wrap">
+                    <button
+                      onClick={() => setChartViewMode('current')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                        chartViewMode === 'current'
+                          ? 'bg-primary-500/20 text-primary-400 border border-primary-500/50'
+                          : 'text-surface-400 hover:text-white hover:bg-surface-800 border border-transparent'
+                      }`}
+                    >
+                      Current Round
+                    </button>
+                    <button
+                      onClick={() => setChartViewMode('all')}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                        chartViewMode === 'all'
+                          ? 'bg-primary-500/20 text-primary-400 border border-primary-500/50'
+                          : 'text-surface-400 hover:text-white hover:bg-surface-800 border border-transparent'
+                      }`}
+                    >
+                      All Rounds
+                    </button>
+                    {availableRounds.length > 0 && (
+                      <select
+                        value={typeof chartViewMode === 'number' ? chartViewMode : ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val) {
+                            setChartViewMode(Number(val));
+                          }
+                        }}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all bg-surface-900 border cursor-pointer ${
+                          typeof chartViewMode === 'number'
+                            ? 'border-primary-500/50 text-primary-400'
+                            : 'border-surface-700 text-surface-400 hover:border-surface-600'
+                        }`}
+                      >
+                        <option value="" disabled>Past Rounds...</option>
+                        {availableRounds.map(roundId => (
+                          <option key={roundId} value={roundId}>
+                            Round #{roundId}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  {chartViewMode !== 'current' && (
+                    <span className="text-xs text-accent-yellow">
+                      {chartViewMode === 'all' 
+                        ? `Showing ${availableRounds.length} rounds` 
+                        : `Historical data for Round #${chartViewMode}`}
+                    </span>
+                  )}
+                </div>
                 <div className="card-body">
-                  <div className="ob-header">
-                    <span>Price (USDC)</span>
-                    <span>Depth</span>
-                    <span style={{textAlign: 'right'}}>Amount</span>
-                    <span style={{textAlign: 'right'}}>Value</span>
+                  <div className="h-[400px] pt-20">
+                    {chartData.length > 1 ? (
+                      <ResponsiveContainer width="100%" height="150%">
+                        <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                          <defs>
+                            <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#22c55e" stopOpacity={0.3} />
+                              <stop offset="50%" stopColor="#22c55e" stopOpacity={0.1} />
+                              <stop offset="100%" stopColor="#22c55e" stopOpacity={0} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid 
+                            strokeDasharray="3 3" 
+                            stroke="#27272a" 
+                            vertical={false}
+                          />
+                          <XAxis
+                            dataKey="time"
+                            stroke="#52525b"
+                            tick={{ fill: '#71717a', fontSize: 12 }}
+                            tickLine={false}
+                            axisLine={false}
+                            interval="preserveStartEnd"
+                          />
+                          <YAxis
+                            domain={[minPrice, maxPrice]}
+                            stroke="#52525b"
+                            tick={{ fill: '#71717a', fontSize: 12 }}
+                            tickLine={false}
+                            axisLine={false}
+                            tickFormatter={(value) => `$${value.toFixed(2)}`}
+                            width={70}
+                          />
+                          <Tooltip content={<CustomTooltip />} />
+                          <ReferenceLine 
+                            y={clearingPrice} 
+                            stroke="#ef4444" 
+                            strokeDasharray="5 5"
+                            label={{ value: `$${clearingPrice.toFixed(4)}`, fill: '#ef4444', fontSize: 12 }}
+                          />
+                          <Area
+                            type="monotone"
+                            dataKey="price"
+                            stroke="#22c55e"
+                            strokeWidth={2}
+                            fill="url(#priceGradient)"
+                            animationDuration={500}
+                          />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="h-full flex flex-col items-center justify-center text-surface-500">
+                        <BarChart3 size={48} className="mb-4 opacity-50" />
+                        <p className="text-lg font-semibold">Waiting for price data...</p>
+                        <p className="text-sm">Chart will appear as orders come in</p>
+                        <div className="mt-8 p-6 bg-surface-800/50 rounded-xl text-center">
+                          <div className="stat-label mb-2">Current Est. Clearing Price</div>
+                          <div className="text-4xl font-mono font-bold text-accent-green">${formatters.price(clearingPrice)}</div>
+                  </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* 📊 Auction Order Book (5 levels above/below) */}
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2 }}
+                className="xl:col-span-4 glass-card"
+              >
+                <div className="card-header">
+                  <h2 className="card-title">
+                    <span className="text-primary-400">📊</span> Auction Book
+                  </h2>
+                  <div className="badge badge-info text-xs">
+                    最近5档
+                        </div>
+                      </div>
+                <div className="card-body">
+                  {/* Header */}
+                  <div className="grid grid-cols-3 gap-2 pb-2 border-b border-surface-800 text-xs text-surface-400 uppercase tracking-wider">
+                    <span>Price</span>
+                    <span className="text-right">Amount</span>
+                    <span className="text-right">Cumulative</span>
+                    </div>
+
+                  {/* Above Clearing - 显示高于清算价格的最近5档（已匹配） */}
+                  <div className="py-2">
+                    {auctionOrderBook.above.length > 0 ? (
+                      auctionOrderBook.above.map((row, i) => (
+                        <div key={`above-${i}`} className="grid grid-cols-3 gap-2 py-2 relative">
+                          <div 
+                            className="absolute inset-y-0 right-0 bg-accent-green/10"
+                            style={{ width: `${row.percent}%` }}
+                          />
+                          <span className="font-mono font-bold text-accent-green relative z-10">
+                            {row.price.toFixed(2)}
+                          </span>
+                          <span className="font-mono text-right text-surface-300 relative z-10">
+                            {row.tokens.toFixed(2)}
+                          </span>
+                          <span className="font-mono text-right text-surface-500 relative z-10">
+                            {row.cumulative.toFixed(2)}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      [5, 4, 3, 2, 1].map(i => (
+                        <div key={`empty-above-${i}`} className="grid grid-cols-3 gap-2 py-2 opacity-30">
+                          <span className="font-mono text-surface-600">--</span>
+                          <span className="font-mono text-right text-surface-600">--</span>
+                          <span className="font-mono text-right text-surface-600">--</span>
+                      </div>
+                      ))
+                    )}
                   </div>
 
-                  <div className="ob-scroll">
-                    {orderBookRows.filter(r => r.isAboveClearing).map((row, i) => (
-                      <div key={i} className="ob-row">
-                        <span className="ob-price" style={{color: '#3fb950'}}>{row.price.toFixed(4)}</span>
-                        <div style={{height: '20px', background: 'rgba(63, 185, 80, 0.1)', borderRadius: '4px', position: 'relative'}}>
-                          <div style={{height: '100%', background: 'rgba(63, 185, 80, 0.4)', width: `${(row as any).percent}%`, borderRadius: '4px'}}></div>
-                        </div>
-                        <span style={{textAlign: 'right', color: '#e6edf3'}}>{row.tokens.toFixed(2)}</span>
-                        <span style={{textAlign: 'right', color: '#8b949e'}}>{formatters.amount(row.usdc)}</span>
-                      </div>
-                    ))}
-                    <div className="clearing-line">
-                      <div className="clearing-price-big">${formatters.price(clearingPrice)}</div>
-                      <div className="clearing-tag">Est. Clearing Price</div>
+                  {/* Clearing Price Line */}
+                  <div className="py-4 my-2 border-y-2 border-dashed border-accent-red/50 bg-accent-red/5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-accent-red font-semibold uppercase">Est. Clearing</span>
+                      <span className="text-2xl font-mono font-bold text-accent-red">
+                        ${clearingPrice.toFixed(2)}
+                      </span>
                     </div>
-                    {orderBookRows.filter(r => !r.isAboveClearing).map((row, i) => (
-                      <div key={i} className="ob-row">
-                        <span className="ob-price" style={{color: '#8b949e'}}>{row.price.toFixed(4)}</span>
-                        <div style={{height: '20px', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', position: 'relative'}}>
-                          <div style={{height: '100%', background: 'rgba(255,255,255,0.08)', width: `${(row as any).percent}%`, borderRadius: '4px'}}></div>
-                        </div>
-                        <span style={{textAlign: 'right', color: '#8b949e'}}>{row.tokens.toFixed(2)}</span>
-                        <span style={{textAlign: 'right', color: '#484f58'}}>{formatters.amount(row.usdc)}</span>
-                      </div>
-                    ))}
-                  </div>
+                    <div className="flex items-center justify-between mt-1">
+                      <span className="text-xs text-surface-500">Matched Volume</span>
+                      <span className="text-sm font-mono text-surface-400">
+                        {formatters.amount(Math.min(totalDemand, PROJECT_CONFIG.supplyPerRound))} wSPX
+                      </span>
+                    </div>
+                    {/* 显示完整档位数 */}
+                    <div className="flex items-center justify-between mt-1 text-xs text-surface-600">
+                      <span>Total Levels: {orderBookRows.filter(r => r.price >= clearingPrice).length} above / {orderBookRows.filter(r => r.price < clearingPrice).length} below</span>
                 </div>
               </div>
 
-              <div className="card">
-                <div className="card-head"><span className="card-title">⏱️ Auction Status</span></div>
-                <div className="card-body">
-                  <div className="timer-box">
-                    <div className="timer-label">Ends In</div>
-                    <div className={`timer-num ${timeLeft < 60 ? 'urgent' : ''}`}>{formatTime(timeLeft)}</div>
-                    <div className="timer-bar">
-                      <div className="timer-bar-fill" style={{width: `${((PROJECT_CONFIG.roundDuration - timeLeft) / PROJECT_CONFIG.roundDuration) * 100}%`}}></div>
+                  {/* Below Clearing - 显示低于清算价格的最近5档（未匹配） */}
+                  <div className="py-2">
+                    {auctionOrderBook.below.length > 0 ? (
+                      auctionOrderBook.below.map((row, i) => (
+                        <div key={`below-${i}`} className="grid grid-cols-3 gap-2 py-2 relative">
+                          <div 
+                            className="absolute inset-y-0 right-0 bg-surface-700/30"
+                            style={{ width: `${row.percent}%` }}
+                          />
+                          <span className="font-mono font-bold text-surface-500 relative z-10">
+                            {row.price.toFixed(2)}
+                          </span>
+                          <span className="font-mono text-right text-surface-500 relative z-10">
+                            {row.tokens.toFixed(2)}
+                          </span>
+                          <span className="font-mono text-right text-surface-600 relative z-10">
+                            {row.cumulative.toFixed(2)}
+                          </span>
                     </div>
+                      ))
+                    ) : (
+                      [1, 2, 3, 4, 5].map(i => (
+                        <div key={`empty-below-${i}`} className="grid grid-cols-3 gap-2 py-2 opacity-30">
+                          <span className="font-mono text-surface-600">--</span>
+                          <span className="font-mono text-right text-surface-600">--</span>
+                          <span className="font-mono text-right text-surface-600">--</span>
+                        </div>
+                      ))
+                    )}
                   </div>
                   
-                  <div style={{marginTop: '20px', padding: '16px', background: 'rgba(63, 185, 80, 0.05)', border: '1px solid rgba(63, 185, 80, 0.2)', borderRadius: '12px', textAlign: 'center'}}>
-                    <div style={{fontSize: '11px', color: '#8b949e', marginBottom: '6px', textTransform: 'uppercase', fontWeight: 600}}>Projected Price</div>
-                    <div style={{fontFamily: 'JetBrains Mono', fontSize: '28px', fontWeight: '800', color: '#3fb950'}}>${formatters.price(clearingPrice)}</div>
+                  {/* Stats */}
+                  <div className="mt-4 pt-4 border-t border-surface-800">
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <div className="text-xs text-surface-500">Total Bids</div>
+                        <div className="font-mono font-bold">{realBids.length}</div>
+                  </div>
+                      <div>
+                        <div className="text-xs text-surface-500">Total Demand</div>
+                        <div className="font-mono font-bold text-accent-green">{formatters.amount(totalDemand)}</div>
+                </div>
+                      <div>
+                        <div className="text-xs text-surface-500">Supply</div>
+                        <div className="font-mono font-bold">{PROJECT_CONFIG.supplyPerRound}</div>
+              </div>
+                      <div>
+                        <div className="text-xs text-surface-500">Fill Rate</div>
+                        <div className={`font-mono font-bold ${totalDemand >= PROJECT_CONFIG.supplyPerRound ? 'text-accent-green' : 'text-accent-yellow'}`}>
+                          {Math.min(100, (totalDemand / PROJECT_CONFIG.supplyPerRound * 100)).toFixed(1)}%
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </motion.div>
             </div>
 
-            {/* 🌟 Layout Bottom: Asset + Bid + Metrics */}
-            <div className="layout-bottom" style={{filter: isSettling ? 'blur(10px)' : 'none', pointerEvents: isSettling ? 'none' : 'auto', transition: 'filter 0.5s'}}>
-              {/* 1. Asset Account (Enhanced with Wallet Balances) */}
-              <div className="card">
-                <div className="card-head"><span className="card-title">💰 Asset Account</span></div>
-                <div className="card-body">
-                  
-                  {/* MetaMask Balances */}
-                  <div style={{marginBottom: '16px'}}>
-                    <div style={{fontSize: '11px', color: '#8b949e', textTransform: 'uppercase', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px'}}>
-                      <span>🦊 My Wallet (MetaMask)</span>
-                    </div>
-                    <div className="bal-grid">
-                      <div className="bal-box" style={{borderColor: 'rgba(88, 166, 255, 0.3)', background: 'rgba(88, 166, 255, 0.05)'}}>
-                        <div className="bal-label" style={{color: '#58a6ff'}}>Wallet USDC</div>
-                        <div className="bal-val">{fmt(walletUsdc)}</div>
-                      </div>
-                      <div className="bal-box" style={{borderColor: 'rgba(168, 85, 247, 0.3)', background: 'rgba(168, 85, 247, 0.05)'}}>
-                        <div className="bal-label" style={{color: '#a855f7'}}>Wallet wSPX</div>
-                        <div className="bal-val">{fmt(walletToken)}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Protocol Balances */}
-                  <div style={{marginBottom: '16px'}}>
-                    <div style={{fontSize: '11px', color: '#8b949e', textTransform: 'uppercase', marginBottom: '8px'}}>
-                      <span>🏛️ Dabanc Account (Protocol)</span>
-                    </div>
-                    <div className="bal-grid">
-                      <div className="bal-box">
-                        <div className="bal-label">Trading USDC</div>
-                        <div className="bal-val">{fmt(contractUsdcBalance)}</div>
-                      </div>
-                      <div className="bal-box">
-                        <div className="bal-label">Custody wSPX</div>
-                        <div className="bal-val" style={{color: '#a855f7'}}>{fmt(contractTokenBalance)}</div>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="tab-row">
-                    <button className={`tab ${selectedAsset === 'USDC' ? 'active' : ''}`} onClick={() => setSelectedAsset('USDC')}>USDC</button>
-                    <button className={`tab ${selectedAsset === 'wSPX' ? 'active' : ''}`} onClick={() => setSelectedAsset('wSPX')}>wSPX</button>
-                  </div>
-                  
-                  <div className="input-group">
-                    <input type="number" value={depositAmount} onChange={e => setDepositAmount(e.target.value)} placeholder="Enter amount..." />
-                    <span className="input-suffix">{selectedAsset}</span>
-                  </div>
-                  
-                  <div className="btn-row">
-                    <button className="btn btn-primary" onClick={handleDeposit} disabled={isPending || isSettling || selectedAsset === 'wSPX'}>
-                      {needsApproval ? `Approve ${selectedAsset}` : 'Deposit'}
-                    </button>
-                    <button className="btn btn-secondary" onClick={handleWithdraw} disabled={isPending || isSettling}>Withdraw</button>
-                  </div>
-                  
-                  <span className="mint-link" onClick={handleMint}>+ Get Test USDC</span>
+            {/* Wallet, Trade Form & Asset Account */}
+            <div className={`grid grid-cols-1 lg:grid-cols-3 gap-6 transition-all duration-500 ${isSettling ? 'blur-sm pointer-events-none' : ''}`}>
+              {/* Asset Account */}
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="glass-card"
+              >
+                <div className="card-header">
+                  <h2 className="card-title">
+                    <span className="text-primary-400">💰</span> Asset Account
+                  </h2>
                 </div>
-              </div>
-
-              {/* 2. Place Bid Order */}
-              <div className="card">
-                <div className="card-head"><span className="card-title">📝 Place Bid Order</span></div>
                 <div className="card-body">
-                  <div className="tab-row">
-                    <button className={`tab ${orderType === 'limit' ? 'active' : ''}`} onClick={() => setOrderType('limit')}>Limit</button>
-                    <button className={`tab ${orderType === 'market' ? 'active' : ''}`} onClick={() => setOrderType('market')}>Market</button>
+                  <div className="mb-4">
+                    <div className="stat-label flex items-center gap-2 mb-2">
+                      <Wallet size={12} /> My Wallet (MetaMask)
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-accent-blue/5 border border-accent-blue/20 rounded-xl p-3">
+                        <div className="text-xs text-accent-blue font-semibold mb-1">USDC</div>
+                        <div className="font-mono font-bold">{fmt(walletUsdc)}</div>
+                      </div>
+                      <div className="bg-primary-500/5 border border-primary-500/20 rounded-xl p-3">
+                        <div className="text-xs text-primary-400 font-semibold mb-1">wSPX</div>
+                        <div className="font-mono font-bold">{fmt(walletToken)}</div>
+                      </div>
+                    </div>
                   </div>
 
-                  {orderType === 'limit' && (
-                     <div className="input-group">
-                       <input type="number" value={limitPrice} onChange={e => setLimitPrice(e.target.value)} placeholder="Set Limit Price" />
-                       <span className="input-suffix">USDC</span>
-                     </div>
-                  )}
-                  {orderType === 'market' && (
-                     <div className="input-group disabled">
-                       <input type="text" disabled value="Market Price" style={{fontStyle: 'italic', opacity: 0.7}} />
-                       <span className="input-suffix">USDC</span>
-                     </div>
-                  )}
-                  
-                  <div style={{marginBottom: '6px', fontSize: '12px', color: '#8b949e', display: 'flex', justifyContent: 'space-between', fontWeight: 600}}>
-                    <span>Bid Amount</span>
-                    <span>Max: {formatters.amount(maxSingleOrder)}</span>
-                  </div>
-                  <div className="input-group">
-                    <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" />
-                    <span className="input-suffix">wSPX</span>
+                  <div className="mb-4">
+                    <div className="stat-label flex items-center gap-2 mb-2">
+                      <Zap size={12} /> Dabanc Account (Protocol)
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-surface-800/50 border border-surface-700 rounded-xl p-3">
+                        <div className="text-xs text-surface-400 font-semibold mb-1">Trading USDC</div>
+                        <div className="font-mono font-bold text-accent-green">{fmt(contractUsdcBalance)}</div>
+                      </div>
+                      <div className="bg-surface-800/50 border border-surface-700 rounded-xl p-3">
+                        <div className="text-xs text-surface-400 font-semibold mb-1">Custody wSPX</div>
+                        <div className="font-mono font-bold text-primary-400">{fmt(contractTokenBalance)}</div>
+                      </div>
+                    </div>
                   </div>
                   
-                  <div className="pct-btns">
-                    {[25, 50, 75, 100].map(p => <button key={p} className="pct-btn" onClick={() => setAmountPercent(p)}>{p}%</button>)}
+                  <div className="tab-group mb-4">
+                    <button 
+                      className={`tab-item ${selectedAsset === 'USDC' ? 'active' : ''}`}
+                      onClick={() => setSelectedAsset('USDC')}
+                    >
+                      USDC
+                    </button>
+                    <button 
+                      className={`tab-item ${selectedAsset === 'wSPX' ? 'active' : ''}`}
+                      onClick={() => setSelectedAsset('wSPX')}
+                    >
+                      wSPX
+                    </button>
                   </div>
                   
-                  <div className="total-box">
-                    <span className="total-label">Required USDC</span>
-                    <span className="total-val">{formatters.amount(totalCost)}</span>
+                  <div className="relative mb-4">
+                    <input 
+                      type="number" 
+                      value={depositAmount} 
+                      onChange={e => setDepositAmount(e.target.value)} 
+                      placeholder="Enter amount..."
+                      className="input-field pr-16"
+                    />
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-surface-500 font-semibold">
+                      {selectedAsset}
+                    </span>
                   </div>
                   
-                  {orderWarning && <div className="warning-msg">⚠️ {orderWarning}</div>}
-                  {txError && <div className="error-msg">{txError}</div>}
+                  <div className="flex gap-3 mb-4">
+                    <button 
+                      className="btn-success flex-1 py-3"
+                      onClick={handleDeposit} 
+                      disabled={isPending || isSettling || selectedAsset === 'wSPX'}
+                    >
+                      {needsApproval ? `Approve` : 'Deposit'}
+                    </button>
+                    <button 
+                      className="btn-secondary flex-1 py-3"
+                      onClick={handleWithdraw} 
+                      disabled={isPending || isSettling}
+                    >
+                      Withdraw
+                    </button>
+                  </div>
                   
-                  <button className="order-btn" onClick={handlePlaceOrder} disabled={!isWhitelisted || isPending || !amount || isSettling}>
-                    {isPending ? 'PROCESSING...' : !isWhitelisted ? 'KYC REQUIRED' : 'CONFIRM BID wSPX'}
+                  <button 
+                    className="text-accent-cyan text-sm hover:underline w-full text-center"
+                    onClick={handleMint}
+                  >
+                    + Get Test USDC
                   </button>
                 </div>
-              </div>
+              </motion.div>
 
-              {/* 3. Round Metrics */}
-              <div className="card">
-                <div className="card-head"><span className="card-title">📊 Round Metrics</span></div>
+              {/* Place Order */}
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.35 }}
+                className="glass-card"
+              >
+                <div className="card-header">
+                  <h2 className="card-title">
+                    <span className="text-primary-400">📝</span> Place Bid Order
+                  </h2>
+                </div>
                 <div className="card-body">
-                  <div className="stats-list">
-                    <div className="stats-row">
-                      <span className="stats-row-label">Round Supply</span>
-                      <span className="stats-row-val">{PROJECT_CONFIG.supplyPerRound} wSPX</span>
+                  <div className="grid grid-cols-2 gap-2 mb-4 p-3 bg-surface-900/50 rounded-xl">
+                    <div className="text-center">
+                      <div className="text-xs text-surface-500 mb-1">USDC Balance</div>
+                      <div className="font-mono text-accent-green text-lg font-bold">
+                        {fmt(contractUsdcBalance)}
+                      </div>
                     </div>
-                    <div className="stats-row">
-                      <span className="stats-row-label">Total Demand</span>
-                      <span className="stats-row-val" style={{color: totalDemand > PROJECT_CONFIG.supplyPerRound ? '#e3b341' : '#3fb950'}}>{formatters.amount(totalDemand)}</span>
-                    </div>
-                    <div className="stats-row">
-                      <span className="stats-row-label">Max Per User</span>
-                      <span className="stats-row-val">{PROJECT_CONFIG.supplyPerRound * 1}</span>
-                    </div>
-                    <div className="stats-row">
-                      <span className="stats-row-label">Progress</span>
-                      <span className="stats-row-val">{Math.min(100, (totalDemand / PROJECT_CONFIG.supplyPerRound * 100)).toFixed(1)}%</span>
-                    </div>
-                    <div style={{marginTop: '20px', height: '8px', width: '100%', background: '#21262d', borderRadius: '4px', overflow: 'hidden'}}>
-                      <div style={{height: '100%', width: `${Math.min(100, (totalDemand / PROJECT_CONFIG.supplyPerRound * 100))}%`, background: '#3fb950', boxShadow: '0 0 10px rgba(63, 185, 80, 0.5)'}}></div>
+                    <div className="text-center">
+                      <div className="text-xs text-surface-500 mb-1">wSPX Holdings</div>
+                      <div className="font-mono text-primary-400 text-lg font-bold">
+                        {fmt(contractTokenBalance)}
+                      </div>
                     </div>
                   </div>
+
+                  <div className="flex items-center justify-center gap-2 mb-4 py-2 bg-accent-yellow/10 border border-accent-yellow/30 rounded-lg">
+                    <Zap size={14} className="text-accent-yellow" />
+                    <span className="text-xs text-accent-yellow font-semibold">Off-Chain Auction - Batch Settlement</span>
+                     </div>
+
+                  <div className="tab-group mb-4">
+                    <button 
+                      className={`tab-item ${orderType === 'limit' ? 'active' : ''}`}
+                      onClick={() => setOrderType('limit')}
+                    >
+                      Limit
+                    </button>
+                    <button 
+                      className={`tab-item ${orderType === 'market' ? 'active' : ''}`}
+                      onClick={() => setOrderType('market')}
+                    >
+                      Market
+                    </button>
+                  </div>
+
+                  {orderType === 'limit' ? (
+                    <div className="relative mb-4">
+                      <input 
+                        type="number" 
+                        value={limitPrice} 
+                        onChange={e => setLimitPrice(e.target.value)} 
+                        placeholder="Set Limit Price"
+                        className="input-field pr-16"
+                      />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-surface-500 font-semibold">
+                        USDC
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="relative mb-4 opacity-60">
+                      <input 
+                        type="text"
+                        disabled
+                        value="Market Price"
+                        className="input-field pr-16 italic"
+                      />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-surface-500 font-semibold">
+                        USDC
+                      </span>
+                     </div>
+                  )}
+                  
+                  <div className="mb-2">
+                    <div className="flex justify-between text-xs text-surface-400 mb-2 font-semibold">
+                    <span>Bid Amount</span>
+                      <span>Max: {formatters.amount(maxSingleOrder)} wSPX</span>
+                  </div>
+                    <div className="relative">
+                      <input 
+                        type="number" 
+                        value={amount} 
+                        onChange={e => setAmount(e.target.value)} 
+                        placeholder="0.00"
+                        className="input-field pr-16"
+                      />
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 text-surface-500 font-semibold">
+                        wSPX
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex gap-2 mb-4">
+                    {[25, 50, 75, 100].map(p => (
+                      <button 
+                        key={p}
+                        onClick={() => setAmountPercent(p)}
+                        className="flex-1 py-2 text-xs font-semibold text-surface-400 bg-surface-800 
+                                   rounded-lg hover:bg-surface-700 hover:text-accent-cyan transition-colors"
+                      >
+                        {p}%
+                      </button>
+                    ))}
+                  </div>
+                  
+                  <div className="bg-surface-900/50 rounded-xl p-4 mb-4">
+                    <div className="flex justify-between items-center">
+                      <span className="text-surface-400">Required USDC</span>
+                      <span className="font-mono text-xl font-bold text-white">
+                        {formatters.amount(totalCost)}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <AnimatePresence>
+                    {orderWarning && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="flex items-center gap-2 p-3 bg-accent-yellow/20 rounded-xl text-accent-yellow text-sm mb-4"
+                      >
+                        <AlertCircle size={16} />
+                        {orderWarning}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  
+                  <AnimatePresence>
+                    {txError && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="flex items-center gap-2 p-3 bg-accent-red/20 rounded-xl text-accent-red text-sm mb-4"
+                      >
+                        <X size={16} />
+                        {txError}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  
+                  <button 
+                    className="btn-success w-full py-4 text-lg uppercase tracking-wide"
+                    onClick={handlePlaceOrder} 
+                    disabled={!isWhitelisted || isPending || !amount || isSettling}
+                  >
+                    {isPending ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <motion.div
+                          animate={{ rotate: 360 }}
+                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                        >
+                          <ArrowDownUp size={18} />
+                        </motion.div>
+                        Processing...
+                      </span>
+                    ) : !isWhitelisted ? 'KYC Required' : 'Confirm Bid wSPX'}
+                  </button>
+
+                  <div className="mt-4 p-3 bg-surface-900/30 rounded-xl text-xs text-surface-500">
+                    <div className="flex justify-between">
+                      <span>Trading Fee</span>
+                      <span>0%</span>
                 </div>
+                    <div className="flex justify-between mt-1">
+                      <span>Mode</span>
+                      <span className="text-accent-yellow">⚡ Batch Auction</span>
               </div>
+                  </div>
+                </div>
+              </motion.div>
+
+              {/* Round Metrics */}
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.4 }}
+                className="glass-card"
+              >
+                <div className="card-header">
+                  <h2 className="card-title">
+                    <span className="text-primary-400">📊</span> Round Metrics
+                  </h2>
+                    </div>
+                <div className="card-body space-y-4">
+                  <div className="flex justify-between items-center py-3 border-b border-surface-800">
+                    <span className="text-surface-400">Round Supply</span>
+                    <span className="font-mono font-bold">{PROJECT_CONFIG.supplyPerRound} wSPX</span>
+                    </div>
+                  <div className="flex justify-between items-center py-3 border-b border-surface-800">
+                    <span className="text-surface-400">Total Demand</span>
+                    <span className={`font-mono font-bold ${totalDemand > PROJECT_CONFIG.supplyPerRound ? 'text-accent-yellow' : 'text-accent-green'}`}>
+                      {formatters.amount(totalDemand)} wSPX
+                    </span>
+                    </div>
+                  <div className="flex justify-between items-center py-3 border-b border-surface-800">
+                    <span className="text-surface-400">Your Orders</span>
+                    <span className="font-mono font-bold text-primary-400">{formatters.amount(userCurrentOrders)} wSPX</span>
+                    </div>
+                  <div className="flex justify-between items-center py-3">
+                    <span className="text-surface-400">Progress</span>
+                    <span className="font-mono font-bold">{Math.min(100, (totalDemand / PROJECT_CONFIG.supplyPerRound * 100)).toFixed(1)}%</span>
+                    </div>
+                  <div className="progress-bar">
+                    <div 
+                      className="progress-fill bg-gradient-to-r from-accent-green to-accent-cyan"
+                      style={{ width: `${Math.min(100, (totalDemand / PROJECT_CONFIG.supplyPerRound * 100))}%` }}
+                    ></div>
+                  </div>
+                  
+                  <div className="mt-6 p-4 bg-accent-green/5 border border-accent-green/20 rounded-xl text-center">
+                    <div className="stat-label">Projected Clearing</div>
+                    <div className="text-3xl font-mono font-bold text-accent-green">${formatters.price(clearingPrice)}</div>
+                </div>
+
+                  <div className="p-4 bg-surface-800/50 rounded-xl">
+                    <h3 className="font-semibold text-white mb-2 text-sm">How It Works</h3>
+                    <ul className="text-xs text-surface-400 space-y-1">
+                      <li>• Bids above clearing → Filled at clearing price</li>
+                      <li>• Bids below clearing → Not filled (returned)</li>
+                      <li>• Single clearing price for all</li>
+                    </ul>
+              </div>
+                </div>
+              </motion.div>
             </div>
           </>
         ) : (
-          <div className="connect-wrap">
-            <div style={{fontSize: '24px', fontWeight: 700}}>Welcome to Dabanc Launchpad</div>
-            <p style={{color: '#8b949e'}}>Connect your wallet to participate in the auction</p>
-            <ConnectButton />
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex flex-col items-center justify-center py-20 glass-card"
+          >
+            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-4xl shadow-xl shadow-primary-500/30 mb-6">
+              <Wallet size={40} />
           </div>
+            <h2 className="text-2xl font-bold mb-2">Welcome to Dabanc Launchpad</h2>
+            <p className="text-surface-400 mb-8">Connect your wallet to participate in the auction</p>
+            <ConnectButton />
+          </motion.div>
         )}
       </div>
+
+      {/* Footer */}
+      <footer className="border-t border-surface-800/50 mt-12 py-6">
+        <div className="container mx-auto px-4 text-center text-surface-500 text-sm">
+          <p>Dabanc Launchpad - Off-chain Order Matching, On-chain Settlement</p>
+          <p className="mt-2 text-surface-600">
+            ⚡ Powered by Ethereum | 🔒 Secure & Transparent
+          </p>
+        </div>
+      </footer>
     </div>
   );
 }

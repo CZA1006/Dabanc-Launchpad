@@ -1,45 +1,75 @@
 import { ethers } from "hardhat";
 import axios from "axios";
 import dotenv from "dotenv";
+import { getAddress, BOT_CONFIG, ACTIVE_NETWORK, NETWORKS } from "../config/addresses";
 dotenv.config();
 
-const AUCTION_ADDRESS = process.env.AUCTION_ADDRESS || "";
-const USDC_ADDRESS = process.env.USDC_ADDRESS || "";
-const API_URL = "http://192.168.188.179:3001/api/bid";
+const AUCTION_ADDRESS = process.env.AUCTION_ADDRESS || getAddress("auction");
+const USDC_ADDRESS = process.env.USDC_ADDRESS || getAddress("usdc");
+const API_URL = "http://localhost:3001/api/bid";
 
 const CONFIG = {
-  minPrice: 10, maxPrice: 20,
-  minAmount: 10, maxAmount: 200,
-  intervalMin: 5000, intervalMax: 15000, 
+  minPrice: 25, maxPrice: 30,
+  minAmount: 1000, maxAmount: 2000,
+  intervalMin: 5000, // 增加到 10s，避免 RPC 频率限制
+  intervalMax: 10000, // 增加到 20s
   safeBuffer: 20, 
+  roundDuration: BOT_CONFIG.roundDuration, 
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   if (!AUCTION_ADDRESS || !USDC_ADDRESS) {
-    console.error("❌ 请检查 .env 配置");
+    console.error("❌ 请检查 .env 配置或 config/addresses.ts");
     process.exit(1);
   }
 
+  const networkInfo = NETWORKS[ACTIVE_NETWORK] || NETWORKS.hyperliquid_testnet;
   const [admin] = await ethers.getSigners();
-  console.log(`🤖 启动 API 流量模拟器 | 账户: ${admin.address}`);
+  console.log(`🤖 启动 API 流量模拟器`);
+  console.log(`🌐 网络: ${networkInfo.name} (Chain ID: ${networkInfo.chainId})`);
+  console.log(`👛 账户: ${admin.address}`);
   
   const auction = await ethers.getContractAt("BatchAuction", AUCTION_ADDRESS);
   const usdc = await ethers.getContractAt("MockERC20", USDC_ADDRESS);
 
+  // 0. 🛡️ 检查白名单状态 (KYC)
+  console.log("🔐 检查白名单状态...");
+  // @ts-ignore
+  const isWhitelisted = await auction.isWhitelisted(admin.address);
+  if (!isWhitelisted) {
+    console.log("   ⚠️  用户未在白名单中，尝试添加...");
+    try {
+      // @ts-ignore
+      await (await auction.setWhitelist([admin.address], true)).wait();
+      console.log("   ✅ 已成功加入白名单");
+    } catch (e: any) {
+      console.error("   ❌ 添加白名单失败 (可能不是管理员):", e.message);
+      console.log("   💡 请让合约管理员运行以下命令:");
+      console.log(`      npx hardhat run scripts/whitelist_user.ts --network hyperliquid_testnet`);
+      process.exit(1);
+    }
+  } else {
+    console.log("   ✅ 已在白名单中");
+  }
+
   // 1. 资金准备 (链上)
   console.log("💰 检查资金...");
   const usdcBalance = await usdc.balanceOf(admin.address);
+  console.log(`   💵 钱包 USDC 余额: ${ethers.formatEther(usdcBalance)} USDC`);
+  
   if (usdcBalance < ethers.parseEther("1000")) {
     console.log("   💸 Minting USDC...");
     await (await usdc.mint(admin.address, ethers.parseEther("100000"))).wait();
+    console.log("   ✅ Mint 完成");
   }
 
   const allowance = await usdc.allowance(admin.address, AUCTION_ADDRESS);
   if (allowance < ethers.parseEther("1000000")) {
-    console.log("   🔓 Approving...");
+    console.log("   🔓 Approving USDC...");
     await (await usdc.approve(AUCTION_ADDRESS, ethers.MaxUint256)).wait();
+    console.log("   ✅ Approve 完成");
   }
 
   // @ts-ignore
@@ -71,7 +101,7 @@ async function main() {
       // @ts-ignore
       const lastTime = Number(await auction.lastClearingTime());
       const now = Math.floor(Date.now() / 1000);
-      const timeLeft = 300 - (now - lastTime);
+      const timeLeft = CONFIG.roundDuration - (now - lastTime);
 
       if (timeLeft < CONFIG.safeBuffer) {
         process.stdout.write(`\r⚠️  剩余 ${timeLeft}s，停止发单...   `);

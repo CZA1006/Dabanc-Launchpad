@@ -2,13 +2,65 @@
 // Dabanc Launchpad - 合约配置
 // ============================================
 
+import { ACTIVE_NETWORK } from './wagmi';
+
 // === 合约地址 (Sepolia Testnet) ===
-export const AUCTION_ADDRESS = "0xe44f10e4b810BAcB6D96D8defB4A57733BCdB786" as const;
-export const USDC_ADDRESS = "0x3c76fE5e109ACd229D7F24a630FFae27857538D6" as const;
-export const TOKEN_ADDRESS = "0x8bA807C3198474E760A8E13D07E85E8806547206" as const;
+export const SEPOLIA_AUCTION_ADDRESS = "0xe44f10e4b810BAcB6D96D8defB4A57733BCdB786" as const;
+export const SEPOLIA_USDC_ADDRESS = "0x3c76fE5e109ACd229D7F24a630FFae27857538D6" as const;
+export const SEPOLIA_TOKEN_ADDRESS = "0x8bA807C3198474E760A8E13D07E85E8806547206" as const;
+
+// === 合约地址 (Hyperliquid Testnet) ===
+export const HYPERLIQUID_AUCTION_ADDRESS = "0x486Aa6B62fdE90Fa76eC88F46f804B86e45717E8" as const;
+export const HYPERLIQUID_USDC_ADDRESS = "0xE0F68e6256B137CF2535A0b03f3dd521f6Dcb35E" as const;
+export const HYPERLIQUID_TOKEN_ADDRESS = "0xCBF2B74008fD4E76f5b0334313d51aC2AffA6248" as const;
+export const HYPERLIQUID_VAULT_ADDRESS = "0x36008222f59b2CAe99e6a969DB5332af5e4367A0" as const;
+
+// === 本地开发地址 (Anvil) ===
+export const LOCAL_AUCTION_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+export const LOCAL_USDC_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+export const LOCAL_TOKEN_ADDRESS = "0x0000000000000000000000000000000000000000" as const;
+
+// 🔧 根据当前激活网络自动选择合约地址
+const getContractAddresses = () => {
+  switch (ACTIVE_NETWORK) {
+    case 'hyperliquid':
+      return {
+        AUCTION: HYPERLIQUID_AUCTION_ADDRESS,
+        USDC: HYPERLIQUID_USDC_ADDRESS,
+        TOKEN: HYPERLIQUID_TOKEN_ADDRESS,
+      };
+    case 'local':
+      return {
+        AUCTION: LOCAL_AUCTION_ADDRESS,
+        USDC: LOCAL_USDC_ADDRESS,
+        TOKEN: LOCAL_TOKEN_ADDRESS,
+      };
+    case 'sepolia':
+    default:
+      return {
+        AUCTION: SEPOLIA_AUCTION_ADDRESS,
+        USDC: SEPOLIA_USDC_ADDRESS,
+        TOKEN: SEPOLIA_TOKEN_ADDRESS,
+      };
+  }
+};
+
+const addresses = getContractAddresses();
+
+// 导出当前网络的合约地址 (向后兼容)
+export const AUCTION_ADDRESS = addresses.AUCTION;
+export const USDC_ADDRESS = addresses.USDC;
+export const TOKEN_ADDRESS = addresses.TOKEN;
 
 // 🌟 CEX 服务器地址 (指向本地运行的 server.ts)
-export const API_URL = "http://192.168.188.179:3001";
+export const API_URL = "http://localhost:3001";
+
+// === 网络配置 ===
+const NETWORK_EXPLORERS = {
+  sepolia: "https://sepolia.etherscan.io",
+  hyperliquid: "https://explorer.hyperliquid-testnet.xyz",
+  local: "http://localhost:8545",
+} as const;
 
 // === 项目配置 ===
 export const PROJECT_CONFIG = {
@@ -24,11 +76,16 @@ export const PROJECT_CONFIG = {
   website: "https://spacex.com",
   whitepaper: "/whitepaper.pdf",
   audit: "/audit-report.pdf",
-  explorer: "https://sepolia.etherscan.io",
+  explorer: NETWORK_EXPLORERS[ACTIVE_NETWORK] || NETWORK_EXPLORERS.sepolia,
   
   // 社交
   twitter: "https://twitter.com/spacex",
   discord: "https://discord.gg/dabanc",
+  
+  // 当前网络信息
+  network: ACTIVE_NETWORK,
+  networkName: ACTIVE_NETWORK === 'hyperliquid' ? 'Hyperliquid Testnet' : 
+               ACTIVE_NETWORK === 'local' ? 'Local Anvil' : 'Sepolia Testnet',
 } as const;
 
 // === 拍卖阶段枚举 ===
@@ -353,7 +410,7 @@ export const ERROR_MESSAGES: Record<string, string> = {
   "execution reverted": "交易执行失败，请检查参数",
   "nonce too low": "交易 Nonce 冲突，请刷新页面重试",
   "replacement fee too low": "Gas 价格过低，交易可能卡住",
-  "network changed": "检测到网络切换，请确认您在 Sepolia 测试网",
+  "network changed": `检测到网络切换，请确认您在 ${ACTIVE_NETWORK === 'hyperliquid' ? 'Hyperliquid' : ACTIVE_NETWORK === 'local' ? 'Local' : 'Sepolia'} 测试网`,
   "InsufficientBalance": "平台账户余额不足，请先充值", // 补充 CEX 模式错误
 };
 

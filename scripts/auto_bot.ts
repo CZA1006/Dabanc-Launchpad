@@ -12,7 +12,7 @@
 import { ethers } from "hardhat";
 import Database from "better-sqlite3";
 import path from "path";
-import { getAddress, BOT_CONFIG, DB_CONFIG, printAddresses, validateAddresses } from "../config/addresses";
+import { getAddress, BOT_CONFIG, DB_CONFIG, printAddresses, validateAddresses, getExplorerUrl, ACTIVE_NETWORK, NETWORKS } from "../config/addresses";
 
 // 🌟 公平分配配置
 const MAX_PER_USER_PERCENT = 0.25;  // 每个用户最多获得 25% 供应量
@@ -27,9 +27,11 @@ db.pragma("journal_mode = WAL");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
+  const networkInfo = NETWORKS[ACTIVE_NETWORK] || NETWORKS.hyperliquid_testnet;
   console.log("🤖 华尔街级清算机器人 (公平分配版 v3.0 - 高速版) 已启动");
+  console.log(`🌐 当前网络: ${networkInfo.name} (Chain ID: ${networkInfo.chainId})`);
   console.log(`⚙️ 每用户最大分配比例: ${MAX_PER_USER_PERCENT * 100}%`);
-  console.log(`🚀 Gas 配置: Priority Fee = 10 gwei, Max Fee = 50 gwei`);
+  console.log(`🚀 Gas 配置: Priority Fee = 1 gwei, Max Fee = 10 gwei`);
   
   const [admin] = await ethers.getSigners();
   console.log(`🔑 管理员钱包地址: ${admin.address}`);
@@ -50,11 +52,19 @@ async function main() {
       const lastTime = Number(await auction.lastClearingTime());
 
       if (isActive) {
+        let blockTimestamp;
+        try {
         const latestBlock = await ethers.provider.getBlock('latest');
-        const blockTimestamp = latestBlock?.timestamp || Math.floor(Date.now() / 1000);
-        const timeLeft = BOT_CONFIG.roundDuration - (blockTimestamp - lastTime);
+          blockTimestamp = latestBlock?.timestamp;
+        } catch (e) {
+          // 如果 RPC 报错 invalid block height，降级使用系统时间
+          blockTimestamp = Math.floor(Date.now() / 1000);
+        }
+        
+        const safeBlockTimestamp = blockTimestamp || Math.floor(Date.now() / 1000);
+        const timeLeft = BOT_CONFIG.roundDuration - (safeBlockTimestamp - lastTime);
 
-        process.stdout.write(`\r⏳ Round #${currentRoundId} 倒计时: ${timeLeft}s   `);
+        process.stdout.write(`\r⏳ Round #${currentRoundId} 倒计时: ${timeLeft}s | 订单: ${db.prepare("SELECT count(*) as count FROM bids WHERE roundId = ? AND status != 'CLEARED'").get(currentRoundId).count}   `);
 
         // 结算缓冲期 (倒计时结束后再等15秒，确保数据同步)
         if (timeLeft <= -15) {
@@ -65,8 +75,7 @@ async function main() {
 
           // 🛡️ 库存安全检查 (防止合约没币导致交易 Revert)
           try {
-            const tokenAddress = getAddress("auctionToken");
-            const tokenAddrReal = tokenAddress || process.env.AUCTION_TOKEN_ADDRESS || "0x980d5d7C293f9dD5c5f2711644f13971E3d0E694"; 
+            const tokenAddrReal = getAddress("auctionToken"); 
             
             const auctionToken = await ethers.getContractAt("MockERC20", tokenAddrReal);
             const inventory = await auctionToken.balanceOf(auctionAddress);
@@ -77,7 +86,7 @@ async function main() {
                 console.error(`   需要: ${SUPPLY} wSPX`);
                 console.error(`   当前: ${ethers.formatEther(inventory)} wSPX`);
                 console.log("⚠️ 跳过本次结算，系统将在 10秒 后重试...");
-                console.log("💡 请运行: npx hardhat run scripts/fix_contract_balance.ts --network sepolia");
+                console.log(`💡 请运行: npx hardhat run scripts/fix_contract_balance.ts --network ${ACTIVE_NETWORK}`);
                 await sleep(10000);
                 continue;
             }
@@ -194,20 +203,20 @@ async function main() {
           try {
             const priceWei = ethers.parseEther(clearingPrice.toFixed(18));
             
-            // 🚀 优化 Gas 配置（降低预留额度，实际消耗会低很多）
+            // 🚀 优化 Gas 配置 (Hyperliquid 使用较低的 gas 价格)
             const tx = await auction.connect(admin).executeClearing(
               priceWei,
               users,
               tokenAmounts,
               costAmounts,
               { 
-                gasLimit: 3000000,                                      // 降低 gasLimit
-                maxPriorityFeePerGas: ethers.parseUnits("10", "gwei"),  // 给矿工 10 gwei 小费
-                maxFeePerGas: ethers.parseUnits("50", "gwei")           // 最高支付 50 gwei
+                gasLimit: 3000000,                                     // 降低 gasLimit
+                maxPriorityFeePerGas: ethers.parseUnits("1", "gwei"),  // Hyperliquid 低 gas
+                maxFeePerGas: ethers.parseUnits("10", "gwei")          // 最高支付 10 gwei
               } 
             );
             console.log(`⏳ Tx: ${tx.hash}`);
-            console.log(`🔗 查看: https://sepolia.etherscan.io/tx/${tx.hash}`);
+            console.log(`🔗 查看: ${getExplorerUrl(tx.hash)}`);
             
             // 等待交易确认，最多等待 120 秒
             console.log(`⏳ 等待链上确认 (最多 120 秒)...`);
@@ -228,8 +237,8 @@ async function main() {
           try {
               const txStart = await auction.connect(admin).startNextRound({ 
                 gasLimit: 300000,
-                maxPriorityFeePerGas: ethers.parseUnits("10", "gwei"),
-                maxFeePerGas: ethers.parseUnits("50", "gwei")
+                maxPriorityFeePerGas: ethers.parseUnits("1", "gwei"),
+                maxFeePerGas: ethers.parseUnits("10", "gwei")
               });
               await txStart.wait(1);
               console.log(`🎉 Round #${currentRoundId + 1} 启动成功！\n`);
@@ -247,8 +256,8 @@ async function main() {
         try {
             const tx = await auction.connect(admin).startNextRound({ 
               gasLimit: 300000,
-              maxPriorityFeePerGas: ethers.parseUnits("10", "gwei"),
-              maxFeePerGas: ethers.parseUnits("50", "gwei")
+              maxPriorityFeePerGas: ethers.parseUnits("1", "gwei"),
+              maxFeePerGas: ethers.parseUnits("10", "gwei")
             });
             await tx.wait(1);
             console.log("🎉 恢复成功！");

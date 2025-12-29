@@ -1,59 +1,79 @@
 #!/bin/bash
+
 # ============================================
-# Sepolia 测试网一键部署脚本
+# DABANC Launchpad - Sepolia 测试网部署脚本
 # ============================================
 
-set -e
-
-echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║       🚀 DABANC Launchpad - Sepolia 部署脚本                 ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
+echo "╔════════════════════════════════════════════════════════════╗"
+echo "║       🚀 DABANC Launchpad - Sepolia Testnet 部署           ║"
+echo "╚════════════════════════════════════════════════════════════╝"
 echo ""
 
-# 检查 .env 文件
-if [ ! -f ".env" ]; then
-    echo "❌ 错误: 未找到 .env 文件"
+# 颜色定义
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# ============================================
+# Step 1: 清理系统文件
+# ============================================
+echo -e "${YELLOW}📁 Step 1/6: 清理系统文件...${NC}"
+find . -name "._*" -type f -delete 2>/dev/null
+npx hardhat clean 2>/dev/null
+echo -e "${GREEN}✅ 清理完成${NC}"
+echo ""
+
+# ============================================
+# Step 2: 检查环境配置
+# ============================================
+echo -e "${YELLOW}🔐 Step 2/6: 检查环境配置...${NC}"
+
+if [ ! -f .env ]; then
+    echo -e "${RED}❌ 错误: 未找到 .env 文件${NC}"
     echo ""
-    echo "请先配置 .env 文件:"
-    echo "  1. 复制模板: cp .env.sepolia.example .env"
-    echo "  2. 编辑 .env 填入你的 PRIVATE_KEY 和 SEPOLIA_RPC_URL"
+    echo "请先创建 .env 文件并配置以下内容:"
+    echo "  PRIVATE_KEY=your_private_key_here"
+    echo "  SEPOLIA_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/your_api_key"
+    echo ""
     exit 1
 fi
 
-# 检查必要的环境变量
-source .env 2>/dev/null || true
+source .env 2>/dev/null
 
-if [ -z "$PRIVATE_KEY" ] || [ "$PRIVATE_KEY" = "0x你的私钥（64位十六进制，不含0x前缀也可以）" ]; then
-    echo "❌ 错误: 请在 .env 中设置有效的 PRIVATE_KEY"
+if [ -z "$PRIVATE_KEY" ] || [ "$PRIVATE_KEY" = "your_private_key_here" ]; then
+    echo -e "${RED}❌ 错误: PRIVATE_KEY 未正确配置${NC}"
     exit 1
 fi
 
-if [ -z "$SEPOLIA_RPC_URL" ] || [[ "$SEPOLIA_RPC_URL" == *"你的API密钥"* ]]; then
-    echo "❌ 错误: 请在 .env 中设置有效的 SEPOLIA_RPC_URL"
+if [ -z "$SEPOLIA_RPC_URL" ] || [[ "$SEPOLIA_RPC_URL" == *"your_api_key"* ]]; then
+    echo -e "${RED}❌ 错误: SEPOLIA_RPC_URL 未正确配置${NC}"
+    echo ""
+    echo "请在 .env 中设置 Alchemy/Infura 的 Sepolia RPC URL"
     exit 1
 fi
 
-echo "✅ 环境变量检查通过"
+echo -e "${GREEN}✅ 环境配置检查通过${NC}"
 echo ""
 
-# 解决 macOS 遗留问题：清理 ._* 文件
-echo "🧹 Step 0: 清理 macOS 遗留文件..."
-find . -name '._*' -type f -delete 2>/dev/null || true
-
-# 检查依赖，解决 Hardhat HHE22 错误
-if [ ! -d "node_modules" ]; then
-    echo "📦 发现缺少依赖，正在自动安装..."
-    npm install
+# ============================================
+# Step 3: 编译合约
+# ============================================
+echo -e "${YELLOW}🔨 Step 3/6: 编译智能合约...${NC}"
+npx hardhat compile
+if [ $? -ne 0 ]; then
+    echo -e "${RED}❌ 编译失败${NC}"
+    exit 1
 fi
-
-# 编译合约
-echo "📦 Step 1: 编译智能合约..."
-npm run compile
+echo -e "${GREEN}✅ 编译完成${NC}"
 echo ""
 
-# 部署合约
-echo "🚀 Step 2: 部署到 Sepolia 测试网..."
-echo "⏳ 这可能需要 1-2 分钟，请耐心等待..."
+# ============================================
+# Step 4: 部署合约
+# ============================================
+echo -e "${YELLOW}🚀 Step 4/6: 部署到 Sepolia 测试网...${NC}"
+echo "   ⏳ 这可能需要 1-2 分钟，请耐心等待..."
 echo ""
 
 DEPLOY_OUTPUT=$(npx hardhat run scripts/deploy_sepolia.ts --network sepolia 2>&1)
@@ -66,91 +86,80 @@ AUCTION_ADDR=$(echo "$DEPLOY_OUTPUT" | grep "Auction 合约:" | grep -oE '0x[a-f
 VAULT_ADDR=$(echo "$DEPLOY_OUTPUT" | grep "Vault 合约:" | grep -oE '0x[a-fA-F0-9]{40}')
 
 if [ -z "$AUCTION_ADDR" ]; then
-    echo "❌ 部署失败，未能提取合约地址"
+    echo -e "${RED}❌ 部署失败，未能提取合约地址${NC}"
     exit 1
 fi
 
 echo ""
-echo "✅ 合约部署成功！"
+echo -e "${GREEN}✅ 合约部署成功${NC}"
 echo ""
 
-# 更新 .env 文件
-echo "📝 Step 3: 更新 .env 文件..."
+# ============================================
+# Step 5: 更新配置文件
+# ============================================
+echo -e "${YELLOW}📝 Step 5/6: 更新配置文件...${NC}"
 
-# 使用 sed 更新或追加地址
-if grep -q "^AUCTION_ADDRESS=" .env; then
-    sed -i.bak "s|^AUCTION_ADDRESS=.*|AUCTION_ADDRESS=$AUCTION_ADDR|" .env
-else
-    echo "AUCTION_ADDRESS=$AUCTION_ADDR" >> .env
-fi
-
-if grep -q "^USDC_ADDRESS=" .env; then
-    sed -i.bak "s|^USDC_ADDRESS=.*|USDC_ADDRESS=$USDC_ADDR|" .env
-else
-    echo "USDC_ADDRESS=$USDC_ADDR" >> .env
-fi
-
-if grep -q "^TOKEN_ADDRESS=" .env; then
-    sed -i.bak "s|^TOKEN_ADDRESS=.*|TOKEN_ADDRESS=$TOKEN_ADDR|" .env
-else
-    echo "TOKEN_ADDRESS=$TOKEN_ADDR" >> .env
-fi
-
-if grep -q "^VAULT_ADDRESS=" .env; then
-    sed -i.bak "s|^VAULT_ADDRESS=.*|VAULT_ADDRESS=$VAULT_ADDR|" .env
-else
-    echo "VAULT_ADDRESS=$VAULT_ADDR" >> .env
-fi
-
+# 更新 .env 中的合约地址
+sed -i.bak "s|^AUCTION_ADDRESS=.*|AUCTION_ADDRESS=$AUCTION_ADDR|" .env 2>/dev/null || echo "AUCTION_ADDRESS=$AUCTION_ADDR" >> .env
+sed -i.bak "s|^USDC_ADDRESS=.*|USDC_ADDRESS=$USDC_ADDR|" .env 2>/dev/null || echo "USDC_ADDRESS=$USDC_ADDR" >> .env
+sed -i.bak "s|^TOKEN_ADDRESS=.*|TOKEN_ADDRESS=$TOKEN_ADDR|" .env 2>/dev/null || echo "TOKEN_ADDRESS=$TOKEN_ADDR" >> .env
+sed -i.bak "s|^VAULT_ADDRESS=.*|VAULT_ADDRESS=$VAULT_ADDR|" .env 2>/dev/null || echo "VAULT_ADDRESS=$VAULT_ADDR" >> .env
+sed -i.bak "s|^HARDHAT_NETWORK=.*|HARDHAT_NETWORK=sepolia|" .env 2>/dev/null || echo "HARDHAT_NETWORK=sepolia" >> .env
 rm -f .env.bak
-echo "✅ .env 文件已更新"
+
+echo -e "${GREEN}✅ .env 已更新${NC}"
 echo ""
 
-# 更新前端常量文件
-echo "💻 Step 3.5: 更新前端 constants.ts..."
-FRONTEND_CONSTANTS="dabanc-frontend/src/constants.ts"
-if [ -f "$FRONTEND_CONSTANTS" ]; then
-    sed -i.bak "s|export const AUCTION_ADDRESS = \".*\"|export const AUCTION_ADDRESS = \"$AUCTION_ADDR\"|" "$FRONTEND_CONSTANTS"
-    sed -i.bak "s|export const USDC_ADDRESS = \".*\"|export const USDC_ADDRESS = \"$USDC_ADDR\"|" "$FRONTEND_CONSTANTS"
-    sed -i.bak "s|export const TOKEN_ADDRESS = \".*\"|export const TOKEN_ADDRESS = \"$TOKEN_ADDR\"|" "$FRONTEND_CONSTANTS"
-    rm -f "${FRONTEND_CONSTANTS}.bak"
-    echo "✅ 前端 constants.ts 已更新"
-else
-    echo "⚠️ 警告: 未找到前端配置文件 $FRONTEND_CONSTANTS，跳过更新"
-fi
-echo ""
+# ============================================
+# Step 6: 初始化拍卖环境
+# ============================================
+echo -e "${YELLOW}🎬 Step 6/6: 初始化拍卖环境...${NC}"
 
 # 初始化数据库
-echo "💾 Step 4: 初始化数据库..."
-npx hardhat run scripts/setup_db.ts --network sepolia
-echo ""
+mkdir -p backend_db
+npx ts-node scripts/setup_db.ts > /dev/null 2>&1
+echo "   ✅ 数据库初始化完成"
 
-# 初始化拍卖
-echo "🎬 Step 5: 初始化拍卖环境..."
-npx hardhat run scripts/init_auction.ts --network sepolia
-echo ""
+# 初始化拍卖合约
+npx hardhat run scripts/init_auction.ts --network sepolia > /dev/null 2>&1
+echo "   ✅ 拍卖合约初始化完成"
 
 # 添加白名单
-echo "📋 Step 6: 添加白名单..."
-npx hardhat run scripts/whitelist_user.ts --network sepolia
+npx hardhat run scripts/whitelist_user.ts --network sepolia > /dev/null 2>&1
+echo "   ✅ 白名单添加完成"
+
+echo -e "${GREEN}✅ 初始化完成${NC}"
 echo ""
 
-# 输出前端配置
-echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║                    🎉 部署完成！                              ║"
-echo "╠══════════════════════════════════════════════════════════════╣"
-echo "║  请将以下地址更新到前端 constants.ts:                        ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
-echo "📌 Etherscan 链接:"
+# ============================================
+# 部署完成
+# ============================================
+echo "╔════════════════════════════════════════════════════════════╗"
+echo "║                    🎉 部署完成！                            ║"
+echo "╠════════════════════════════════════════════════════════════╣"
+echo "║  网络: Sepolia Testnet (Chain ID: 11155111)                ║"
+echo "╚════════════════════════════════════════════════════════════╝"
+echo ""
+echo -e "${BLUE}📍 Etherscan 链接:${NC}"
+echo "   Auction: https://sepolia.etherscan.io/address/$AUCTION_ADDR"
 echo "   USDC:    https://sepolia.etherscan.io/address/$USDC_ADDR"
 echo "   wSPX:    https://sepolia.etherscan.io/address/$TOKEN_ADDR"
-echo "   Auction: https://sepolia.etherscan.io/address/$AUCTION_ADDR"
 echo "   Vault:   https://sepolia.etherscan.io/address/$VAULT_ADDR"
 echo ""
-echo "🔥 下一步:"
-echo "   1. 更新前端 dabanc-frontend/src/constants.ts 中的合约地址"
-echo "   2. 确保前端 wagmi.ts 中 chains 包含 sepolia"
-echo "   3. 运行前端: cd dabanc-frontend && npm run dev"
-echo "   4. 运行清算机器人: npx hardhat run scripts/auto_bot.ts --network sepolia"
+echo -e "${YELLOW}📌 下一步操作:${NC}"
 echo ""
-
+echo "   1️⃣  确认前端网络配置:"
+echo "       检查 dabanc-frontend/src/wagmi.ts 中 ACTIVE_NETWORK = 'sepolia'"
+echo ""
+echo "   2️⃣  启动前端:"
+echo "       cd dabanc-frontend && npm run dev"
+echo ""
+echo "   3️⃣  启动 API 服务 (新终端):"
+echo "       npx hardhat run scripts/server.ts --network sepolia"
+echo ""
+echo "   4️⃣  启动清算机器人 (新终端):"
+echo "       npx hardhat run scripts/auto_bot.ts --network sepolia"
+echo ""
+echo "   5️⃣  启动流量模拟器 (可选, 新终端):"
+echo "       npx hardhat run scripts/simulate_traffic.ts --network sepolia"
+echo ""

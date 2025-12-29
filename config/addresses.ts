@@ -14,16 +14,38 @@ export const NETWORKS = {
   hardhat: {
     chainId: 31337,
     name: "Hardhat Local",
+    explorer: "http://localhost:8545",
   },
   sepolia: {
     chainId: 11155111,
     name: "Sepolia Testnet",
+    explorer: "https://sepolia.etherscan.io",
+  },
+  hyperliquid_testnet: {
+    chainId: 998,
+    name: "Hyperliquid Testnet",
+    explorer: "https://explorer.hyperliquid-testnet.xyz",
   },
   mainnet: {
     chainId: 1,
     name: "Ethereum Mainnet",
+    explorer: "https://etherscan.io",
   },
 } as const;
+
+// 当前激活的网络 (从环境变量读取，默认 hyperliquid_testnet)
+export const ACTIVE_NETWORK = (process.env.HARDHAT_NETWORK || "hyperliquid_testnet") as keyof typeof NETWORKS;
+
+/**
+ * 获取当前网络的区块浏览器 URL
+ */
+export function getExplorerUrl(txHash?: string): string {
+  const network = NETWORKS[ACTIVE_NETWORK] || NETWORKS.hyperliquid_testnet;
+  if (txHash) {
+    return `${network.explorer}/tx/${txHash}`;
+  }
+  return network.explorer;
+}
 
 /**
  * 合约地址 - 从环境变量读取
